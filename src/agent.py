@@ -1,21 +1,17 @@
-from llm import ask_agent
-from tools import inspect_dataset, execute_analysis
+from llm import create_chat
+from google.genai import types
+
+from tools import (
+    inspect_dataset,
+    execute_analysis
+)
 
 
 def run_agent(user_question, df):
-    """
-    Run the AI Data Analyst agent.
 
-    The agent:
-    1. Sends the question to Gemini.
-    2. Detects the requested tool.
-    3. Executes the tool.
-    4. Returns the tool result.
-    """
-
-    # -----------------------------------------
-    # 1. Build dataset information
-    # -----------------------------------------
+    # ==================================================
+    # DATASET INFORMATION
+    # ==================================================
 
     dataset_info = {
         "rows": len(df),
@@ -27,73 +23,187 @@ def run_agent(user_question, df):
         }
     }
 
-    # -----------------------------------------
-    # 2. Ask Gemini what tool to use
-    # -----------------------------------------
+    print("\n===== DATASET INFO =====")
+    print(dataset_info)
 
-    response = ask_agent(
-        user_question,
-        dataset_info
-    )
 
-    # -----------------------------------------
-    # 3. Look for function calls
-    # -----------------------------------------
+    # ==================================================
+    # CREATE CHAT
+    # ==================================================
 
-    for candidate in response.candidates:
+    chat = create_chat()
 
-        if not candidate.content:
-            continue
 
-        if not candidate.content.parts:
-            continue
+    # ==================================================
+    # INITIAL PROMPT
+    # ==================================================
 
-        for part in candidate.content.parts:
+    prompt = f"""
+You are an AI Data Analyst Agent.
 
-            if not part.function_call:
+You are working with a Pandas DataFrame called df.
+
+Dataset information:
+
+{dataset_info}
+
+User question:
+
+{user_question}
+
+Available tools:
+
+1. inspect_dataset
+   Use this to inspect the dataset structure.
+
+2. execute_analysis
+   Use this to perform Python calculations
+   and analysis.
+
+You may call tools multiple times.
+
+After receiving a tool result, decide whether
+you need another tool.
+
+When you have enough information, give the
+user a clear final answer.
+
+Never invent numerical results.
+"""
+
+
+    # ==================================================
+    # AGENT LOOP
+    # ==================================================
+
+    max_iterations = 5
+
+    response = chat.send_message(prompt)
+
+
+    for iteration in range(max_iterations):
+
+        print(
+            f"\n===== AGENT ITERATION "
+            f"{iteration + 1} ====="
+        )
+
+
+        tool_called = False
+
+
+        # ==================================================
+        # CHECK RESPONSE
+        # ==================================================
+
+        for candidate in response.candidates:
+
+            if not candidate.content:
                 continue
 
-            function_call = part.function_call
+            if not candidate.content.parts:
+                continue
 
-            tool_name = function_call.name
-            arguments = function_call.args
 
-            print("\n===== TOOL CALL =====")
-            print("Tool:", tool_name)
-            print("Arguments:", arguments)
+            for part in candidate.content.parts:
 
-            # -----------------------------------------
-            # 4. Execute requested tool
-            # -----------------------------------------
+                # ------------------------------------------
+                # TEXT RESPONSE
+                # ------------------------------------------
 
-            if tool_name == "inspect_dataset":
+                if part.text:
 
-                result = inspect_dataset(df)
+                    print("\nAGENT:")
+                    print(part.text)
 
-            elif tool_name == "execute_analysis":
 
-                code = arguments["code"]
+                # ------------------------------------------
+                # FUNCTION CALL
+                # ------------------------------------------
 
-                result = execute_analysis(
-                    code,
-                    df
+                if not part.function_call:
+                    continue
+
+
+                tool_called = True
+
+                function_call = part.function_call
+
+                tool_name = function_call.name
+
+                arguments = function_call.args
+
+
+                print("\n===== TOOL CALL =====")
+                print("Tool:", tool_name)
+                print("Arguments:", arguments)
+
+
+                # ==================================================
+                # EXECUTE TOOL
+                # ==================================================
+
+                if tool_name == "inspect_dataset":
+
+                    tool_result = inspect_dataset(df)
+
+
+                elif tool_name == "execute_analysis":
+
+                    code = arguments["code"]
+
+                    tool_result = execute_analysis(
+                        code,
+                        df
+                    )
+
+
+                else:
+
+                    tool_result = {
+                        "error": f"Unknown tool: {tool_name}"
+                    }
+
+
+                print("\n===== TOOL RESULT =====")
+                print(tool_result)
+
+
+                # ==================================================
+                # SEND TOOL RESULT BACK TO GEMINI
+                # ==================================================
+
+                response = chat.send_message(
+                    types.Part(
+                        function_response=types.FunctionResponse(
+                            name=tool_name,
+                            response={
+                                "result": tool_result
+                            }
+                        )
+                    )
                 )
 
-            else:
 
-                result = {
-                    "error": f"Unknown tool: {tool_name}"
-                }
+                break
 
-            # -----------------------------------------
-            # 5. Show result
-            # -----------------------------------------
 
-            print("\n===== TOOL RESULT =====")
-            print(result)
+            if tool_called:
+                break
 
-            return result
 
-    return {
-        "error": "Gemini did not request a tool."
-    }
+        # ==================================================
+        # NO TOOL CALL = FINAL ANSWER
+        # ==================================================
+
+        if not tool_called:
+
+            print("\n===== FINAL ANSWER =====")
+
+            return response.text
+
+
+    return (
+        "The agent reached the maximum number "
+        "of analysis steps."
+    )

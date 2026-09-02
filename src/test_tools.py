@@ -21,7 +21,7 @@ dataset_info = {
 }
 
 
-question = "What is the average age of the passengers?"
+question = "Which passenger class had the highest survival rate?"
 
 
 response = ask_agent(
