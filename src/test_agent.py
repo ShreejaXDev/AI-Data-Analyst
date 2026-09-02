@@ -3,21 +3,60 @@ import pandas as pd
 from agent import run_agent
 
 
-print("STEP 1: Starting test...")
+# ==================================================
+# START
+# ==================================================
+
+print(
+    "STEP 1: Starting AI Data Analyst..."
+)
 
 
-df = pd.read_csv("data/train.csv")
+# ==================================================
+# LOAD DATASET
+# ==================================================
+
+df = pd.read_csv(
+    "data/train.csv"
+)
 
 
-print("STEP 2: Dataset loaded")
-print("Shape:", df.shape)
-print("Columns:", df.columns.tolist())
+print(
+    "\nSTEP 2: Dataset loaded"
+)
 
-question = "Which passenger class had the highest survival rate?"
+print(
+    "Shape:",
+    df.shape
+)
 
-print("\nSTEP 3: Sending question to agent...")
-print("Question:", question)
+print(
+    "Columns:",
+    df.columns.tolist()
+)
 
+
+# ==================================================
+# USER QUESTION
+# ==================================================
+question = """
+Calculate the average age of passengers.
+"""
+
+
+print(
+    "\nSTEP 3: Sending question to agent..."
+)
+
+print(
+    "Question:",
+    question
+)
+
+
+# ==================================================
+# RUN AGENT
+# ==================================================
 
 final_answer = run_agent(
     question,
@@ -25,7 +64,26 @@ final_answer = run_agent(
 )
 
 
-print("\nSTEP 4: Agent finished")
+# ==================================================
+# FINAL RESULT
+# ==================================================
 
-print("\n===== FINAL ANSWER =====")
-print(final_answer)
+print(
+    "\nSTEP 4: Agent finished"
+)
+
+print(
+    "\n======================================"
+)
+
+print(
+    "FINAL ANSWER"
+)
+
+print(
+    "======================================"
+)
+
+print(
+    final_answer
+)

@@ -1,17 +1,48 @@
-from llm import create_chat
+import json
+
 from google.genai import types
+
+from llm import create_chat
 
 from tools import (
     inspect_dataset,
+    get_basic_statistics,
     execute_analysis
 )
 
 
+# ============================================================
+# HELPER — EXTRACT JSON FROM MODEL RESPONSE
+# ============================================================
+
+def extract_json(text):
+
+    text = text.strip()
+
+    # Remove markdown code fences if Gemini adds them
+    if text.startswith("```json"):
+        text = text[7:]
+
+    elif text.startswith("```"):
+        text = text[3:]
+
+    if text.endswith("```"):
+        text = text[:-3]
+
+    text = text.strip()
+
+    return json.loads(text)
+
+
+# ============================================================
+# AGENT
+# ============================================================
+
 def run_agent(user_question, df):
 
-    # ==================================================
+    # ========================================================
     # DATASET INFORMATION
-    # ==================================================
+    # ========================================================
 
     dataset_info = {
         "rows": len(df),
@@ -26,75 +57,261 @@ def run_agent(user_question, df):
     print("\n===== DATASET INFO =====")
     print(dataset_info)
 
-
-    # ==================================================
+    # ========================================================
     # CREATE CHAT
-    # ==================================================
+    # ========================================================
 
     chat = create_chat()
 
+    # ========================================================
+    # PHASE 5.2 — STRUCTURED PLANNING
+    # ========================================================
 
-    # ==================================================
-    # INITIAL PROMPT
-    # ==================================================
-
-    prompt = f"""
+    planning_prompt = f"""
 You are an AI Data Analyst Agent.
 
-You are working with a Pandas DataFrame called df.
+Your task is to create a structured execution plan
+for answering a user's data analysis question.
 
-Dataset information:
+DATASET INFORMATION
+===================
 
-{dataset_info}
+Rows: {dataset_info["rows"]}
 
-User question:
+Columns: {dataset_info["columns"]}
+
+Column names:
+{dataset_info["column_names"]}
+
+Data types:
+{dataset_info["data_types"]}
+
+
+USER QUESTION
+=============
 
 {user_question}
 
-Available tools:
 
-1. inspect_dataset
-   Use this to inspect the dataset structure.
+CREATE A PLAN
+=============
 
-2. execute_analysis
-   Use this to perform Python calculations
-   and analysis.
+Break the task into the smallest number of useful
+analysis steps.
 
-You may call tools multiple times.
+Return ONLY valid JSON.
 
-After receiving a tool result, decide whether
-you need another tool.
+The JSON must have exactly this structure:
 
-When you have enough information, give the
-user a clear final answer.
+{{
+    "goal": "short description of the user's goal",
+    "steps": [
+        {{
+            "id": 1,
+            "description": "description of step",
+            "status": "pending"
+        }},
+        {{
+            "id": 2,
+            "description": "description of step",
+            "status": "pending"
+        }}
+    ]
+}}
 
-Never invent numerical results.
+Rules:
+
+- Step IDs must start at 1.
+- IDs must increase sequentially.
+- Every step must initially have status "pending".
+- Do not execute Python.
+- Do not provide explanations outside the JSON.
 """
 
+    print("\n===== CREATING STRUCTURED PLAN =====")
 
-    # ==================================================
-    # AGENT LOOP
-    # ==================================================
+    plan_response = chat.send_message(
+        planning_prompt
+    )
 
-    max_iterations = 5
+    # ========================================================
+    # PARSE PLAN
+    # ========================================================
 
-    response = chat.send_message(prompt)
+    try:
 
+        plan = extract_json(
+            plan_response.text
+        )
 
-    for iteration in range(max_iterations):
+    except Exception as e:
+
+        print("\nERROR: Could not parse plan.")
+
+        print(
+            "Gemini response:",
+            plan_response.text
+        )
+
+        return (
+            "The agent could not create a "
+            "structured analysis plan."
+        )
+
+    # ========================================================
+    # DISPLAY PLAN
+    # ========================================================
+
+    print("\n===== STRUCTURED PLAN =====")
+
+    print(
+        json.dumps(
+            plan,
+            indent=4
+        )
+    )
+
+    # ========================================================
+    # VALIDATE PLAN
+    # ========================================================
+
+    if "goal" not in plan or "steps" not in plan:
+
+        return (
+            "Invalid plan generated by the agent."
+        )
+
+    if not isinstance(
+        plan["steps"],
+        list
+    ):
+
+        return (
+            "Invalid plan: steps must be a list."
+        )
+
+    # ========================================================
+    # AGENT EXECUTION LOOP
+    # ========================================================
+
+    max_iterations = 10
+
+    for iteration in range(
+        max_iterations
+    ):
 
         print(
             f"\n===== AGENT ITERATION "
             f"{iteration + 1} ====="
         )
 
+        # ----------------------------------------------------
+        # FIND NEXT PENDING STEP
+        # ----------------------------------------------------
+
+        pending_steps = [
+            step
+            for step in plan["steps"]
+            if step["status"] == "pending"
+        ]
+
+        # ----------------------------------------------------
+        # ALL STEPS COMPLETE
+        # ----------------------------------------------------
+
+        if not pending_steps:
+
+            print(
+                "\n===== ALL PLAN STEPS COMPLETED ====="
+            )
+
+            break
+
+        next_step = pending_steps[0]
+
+        print(
+            "\nCURRENT STEP:"
+        )
+
+        print(
+            f"Step {next_step['id']}: "
+            f"{next_step['description']}"
+        )
+
+        # ====================================================
+        # EXECUTION PROMPT
+        # ====================================================
+
+        execution_prompt = f"""
+You are executing an AI Data Analyst plan.
+
+USER QUESTION
+=============
+
+{user_question}
+
+
+DATASET INFORMATION
+===================
+
+{dataset_info}
+
+
+FULL PLAN
+=========
+
+{json.dumps(plan, indent=2)}
+
+
+CURRENT STEP
+============
+
+Step {next_step["id"]}
+
+{next_step["description"]}
+
+
+YOUR TASK
+=========
+
+Complete the CURRENT STEP.
+
+Use the available tools when necessary.
+
+Available tools:
+
+1. inspect_dataset
+2. get_basic_statistics
+3. execute_analysis
+
+
+IMPORTANT RULES
+===============
+
+- Use Python for numerical calculations.
+- The Pandas DataFrame is called df.
+- Never invent numerical results.
+- Store the final Python analysis result in `result`.
+- Use previous tool results when useful.
+- Only perform work necessary for the current step.
+- After the tool result is available, determine whether
+  the current step has been successfully completed.
+
+"""
+
+        # ====================================================
+        # SEND TO GEMINI
+        # ====================================================
+
+        response = chat.send_message(
+            execution_prompt
+        )
 
         tool_called = False
 
-
-        # ==================================================
-        # CHECK RESPONSE
-        # ==================================================
+        # ====================================================
+        # PROCESS RESPONSE
+        # ====================================================
 
         for candidate in response.candidates:
 
@@ -104,106 +321,222 @@ Never invent numerical results.
             if not candidate.content.parts:
                 continue
 
-
             for part in candidate.content.parts:
 
-                # ------------------------------------------
+                # ============================================
                 # TEXT RESPONSE
-                # ------------------------------------------
+                # ============================================
 
                 if part.text:
 
-                    print("\nAGENT:")
-                    print(part.text)
+                    print(
+                        "\nAGENT MESSAGE:"
+                    )
 
+                    print(
+                        part.text
+                    )
 
-                # ------------------------------------------
+                # ============================================
                 # FUNCTION CALL
-                # ------------------------------------------
+                # ============================================
 
                 if not part.function_call:
                     continue
 
-
                 tool_called = True
 
-                function_call = part.function_call
+                function_call = (
+                    part.function_call
+                )
 
-                tool_name = function_call.name
+                tool_name = (
+                    function_call.name
+                )
 
-                arguments = function_call.args
+                arguments = (
+                    function_call.args
+                )
 
+                print(
+                    "\n===== TOOL CALL ====="
+                )
 
-                print("\n===== TOOL CALL =====")
-                print("Tool:", tool_name)
-                print("Arguments:", arguments)
+                print(
+                    "Tool:",
+                    tool_name
+                )
 
+                print(
+                    "Arguments:",
+                    arguments
+                )
 
-                # ==================================================
+                # ============================================
                 # EXECUTE TOOL
-                # ==================================================
+                # ============================================
 
                 if tool_name == "inspect_dataset":
 
-                    tool_result = inspect_dataset(df)
+                    tool_result = (
+                        inspect_dataset(df)
+                    )
 
+                elif tool_name == "get_basic_statistics":
+
+                    tool_result = (
+                        get_basic_statistics(df)
+                    )
 
                 elif tool_name == "execute_analysis":
 
                     code = arguments["code"]
 
-                    tool_result = execute_analysis(
-                        code,
-                        df
+                    tool_result = (
+                        execute_analysis(
+                            code,
+                            df
+                        )
                     )
-
 
                 else:
 
                     tool_result = {
-                        "error": f"Unknown tool: {tool_name}"
+                        "error": (
+                            f"Unknown tool: "
+                            f"{tool_name}"
+                        )
                     }
 
+                # ============================================
+                # DISPLAY TOOL RESULT
+                # ============================================
 
-                print("\n===== TOOL RESULT =====")
-                print(tool_result)
+                print(
+                    "\n===== TOOL RESULT ====="
+                )
 
+                print(
+                    tool_result
+                )
 
-                # ==================================================
-                # SEND TOOL RESULT BACK TO GEMINI
-                # ==================================================
+                # ============================================
+                # SEND RESULT BACK TO GEMINI
+                # ============================================
 
                 response = chat.send_message(
+
                     types.Part(
-                        function_response=types.FunctionResponse(
-                            name=tool_name,
-                            response={
-                                "result": tool_result
-                            }
+
+                        function_response=(
+                            types.FunctionResponse(
+
+                                name=tool_name,
+
+                                response={
+                                    "result": tool_result
+                                }
+                            )
                         )
                     )
                 )
 
+                # ============================================
+                # MARK CURRENT STEP COMPLETE
+                # ============================================
+
+                next_step["status"] = "completed"
+
+                print(
+                    f"\nSTEP {next_step['id']} "
+                    f"STATUS: COMPLETED"
+                )
 
                 break
-
 
             if tool_called:
                 break
 
-
-        # ==================================================
-        # NO TOOL CALL = FINAL ANSWER
-        # ==================================================
+        # ====================================================
+        # NO TOOL REQUIRED
+        # ====================================================
 
         if not tool_called:
 
-            print("\n===== FINAL ANSWER =====")
+            # If Gemini has enough information and
+            # does not need another tool, mark the
+            # current step as completed.
 
-            return response.text
+            next_step["status"] = "completed"
 
+            print(
+                f"\nSTEP {next_step['id']} "
+                f"STATUS: COMPLETED"
+            )
 
-    return (
-        "The agent reached the maximum number "
-        "of analysis steps."
+    # ========================================================
+    # FINAL ANSWER
+    # ========================================================
+
+    print(
+        "\n===== GENERATING FINAL ANSWER ====="
     )
+
+    final_prompt = f"""
+You are the final response generator for an
+AI Data Analyst Agent.
+
+USER QUESTION
+=============
+
+{user_question}
+
+
+DATASET
+=======
+
+{dataset_info}
+
+
+COMPLETED PLAN
+==============
+
+{json.dumps(plan, indent=2)}
+
+
+Provide the final answer to the user.
+
+Requirements:
+
+- Answer the original question directly.
+- Use only results obtained from the analysis.
+- Never invent numbers.
+- Explain important calculations briefly.
+- Keep the answer clear and readable.
+- Use bullet points or a small table when useful.
+"""
+
+    final_response = chat.send_message(
+        final_prompt
+    )
+
+    # ========================================================
+    # DISPLAY FINAL STATE
+    # ========================================================
+
+    print(
+        "\n===== FINAL PLAN STATE ====="
+    )
+
+    print(
+        json.dumps(
+            plan,
+            indent=4
+        )
+    )
+
+    print(
+        "\n===== FINAL ANSWER ====="
+    )
+
+    return final_response.text

@@ -1,17 +1,40 @@
 def execute_python(code, df):
-    """
-    Execute LLM-generated Python code using the provided DataFrame.
-    """
+
+    import pandas as pd
+    import numpy as np
 
     local_variables = {
-        "df": df
+        "df": df,
+        "pd": pd,
+        "np": np
     }
 
-    exec(code, {}, local_variables)
+    try:
 
-    if "result" not in local_variables:
-        raise ValueError(
-            "Generated code did not create a variable named 'result'."
+        exec(
+            code,
+            {},
+            local_variables
         )
 
-    return local_variables["result"]
+        if "result" not in local_variables:
+
+            return {
+                "success": False,
+                "error": (
+                    "The generated code did not "
+                    "create a variable named 'result'."
+                )
+            }
+
+        return {
+            "success": True,
+            "result": local_variables["result"]
+        }
+
+    except Exception as e:
+
+        return {
+            "success": False,
+            "error": f"{type(e).__name__}: {str(e)}"
+        }
