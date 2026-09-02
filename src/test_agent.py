@@ -40,7 +40,8 @@ print(
 # USER QUESTION
 # ==================================================
 question = """
-Calculate the average age of passengers.
+Show me the survival rate for each passenger class
+and create an appropriate visualization.
 """
 
 

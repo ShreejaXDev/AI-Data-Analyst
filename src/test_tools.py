@@ -21,7 +21,7 @@ dataset_info = {
 }
 
 
-question = "Which passenger class had the highest survival rate?"
+question = "How many columns does the dataset have?"
 
 
 response = ask_agent(

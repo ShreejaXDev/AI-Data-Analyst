@@ -1,12 +1,16 @@
+import matplotlib.pyplot as plt
+
 def execute_python(code, df):
 
     import pandas as pd
     import numpy as np
+    import matplotlib.pyplot as plt
 
     local_variables = {
         "df": df,
         "pd": pd,
-        "np": np
+        "np": np,
+        "plt": plt
     }
 
     try:
