@@ -1,47 +1,37 @@
-from data_loader import choose_dataset, load_csv
-from agent import run_agent, reset_conversation
+from agent import (
+    run_agent,
+    reset_conversation
+)
+
+from data_loader import (
+    choose_dataset,
+    load_csv
+)
+
+
+print(
+    "=" * 60
+)
+
+print(
+    "AI DATA ANALYST - PHASE 10"
+)
+
+print(
+    "=" * 60
+)
 
 
 # ============================================================
-# PHASE 9
-# CONVERSATIONAL AI DATA ANALYST
+# DATASET SELECTION
 # ============================================================
 
-print("=" * 60)
-print("AI DATA ANALYST - PHASE 9")
-print("=" * 60)
+selected_dataset = choose_dataset()
 
-
-# ============================================================
-# SELECT DATASET
-# ============================================================
-
-dataset_name = choose_dataset()
-
-
-if dataset_name is None:
+if not selected_dataset:
 
     print(
-        "\nNo dataset selected."
-    )
-
-    exit()
-
-
-# ============================================================
-# LOAD DATASET
-# ============================================================
-
-try:
-
-    df = load_csv(
-        dataset_name
-    )
-
-except Exception as e:
-
-    print(
-        f"\nError loading dataset: {e}"
+        "No dataset selected."
     )
 
     exit()
@@ -49,11 +39,24 @@ except Exception as e:
 
 print()
 print(
-    f"Selected dataset: {dataset_name}"
+    f"Selected dataset: {selected_dataset}"
 )
 
-print()
 
+df = load_csv(
+    selected_dataset
+)
+
+if df is None:
+
+    print(
+        "Failed to load dataset."
+    )
+
+    exit()
+
+
+print()
 print(
     "Dataset loaded successfully."
 )
@@ -68,13 +71,21 @@ print(
 
 
 # ============================================================
-# CONVERSATION
+# CONVERSATIONAL MODE
 # ============================================================
 
 print()
-print("#" * 60)
-print("CONVERSATIONAL MODE")
-print("#" * 60)
+print(
+    "#" * 60
+)
+
+print(
+    "CONVERSATIONAL MODE"
+)
+
+print(
+    "#" * 60
+)
 
 print()
 print(
@@ -89,44 +100,34 @@ print(
     "Type 'clear' to clear conversation memory."
 )
 
-print()
 
+# ============================================================
+# QUESTION LOOP
+# ============================================================
 
 while True:
 
     try:
 
         question = input(
-            "You: "
+            "\nYou: "
         ).strip()
 
-    except (
-        KeyboardInterrupt,
-        EOFError
-    ):
+    except KeyboardInterrupt:
 
+        print()
         print(
-            "\nGoodbye!"
+            "Goodbye! 👋"
         )
 
         break
 
-
-    # --------------------------------------------------------
-    # Empty question
-    # --------------------------------------------------------
-
     if not question:
-
-        print(
-            "Please enter a question."
-        )
 
         continue
 
-
     # --------------------------------------------------------
-    # EXIT
+    # Exit
     # --------------------------------------------------------
 
     if question.lower() in [
@@ -141,57 +142,22 @@ while True:
 
         break
 
-
     # --------------------------------------------------------
-    # CLEAR MEMORY
+    # Clear memory
     # --------------------------------------------------------
 
     if question.lower() == "clear":
 
         reset_conversation()
 
-        print()
-        print(
-            "Conversation memory cleared."
-        )
-
-        print()
-
         continue
 
-
     # --------------------------------------------------------
-    # ASK AGENT
+    # Run agent
     # --------------------------------------------------------
 
-    try:
-
-        answer = run_agent(
-            question,
-            df,
-            dataset_name
-        )
-
-        print()
-        print(
-            "AI:"
-        )
-
-        print(
-            answer
-        )
-
-        print()
-
-    except Exception as e:
-
-        print()
-        print(
-            "Agent Error:"
-        )
-
-        print(
-            str(e)
-        )
-
-        print()
+    run_agent(
+        question,
+        df,
+        selected_dataset
+    )
