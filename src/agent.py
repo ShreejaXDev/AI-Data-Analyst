@@ -1,8 +1,6 @@
 import os
 import json
 
-import pandas as pd
-
 from dotenv import load_dotenv
 from google import genai
 
@@ -21,15 +19,11 @@ from data_loader import choose_dataset, load_csv
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv(
-    "GEMINI_API_KEY"
-)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
-
     raise ValueError(
-        "GEMINI_API_KEY environment variable "
-        "is not set."
+        "GEMINI_API_KEY environment variable is not set."
     )
 
 
@@ -42,6 +36,13 @@ MODEL_NAME = "gemini-3.5-flash-lite"
 client = genai.Client(
     api_key=GEMINI_API_KEY
 )
+
+
+# ============================================================
+# CONVERSATION MEMORY
+# ============================================================
+
+conversation_history = []
 
 
 # ============================================================
@@ -180,48 +181,127 @@ You analyze ANY CSV dataset supplied by the user.
 
 You are NOT limited to a specific dataset.
 
---------------------------------------------------
+==================================================
 CORE WORKFLOW
---------------------------------------------------
+==================================================
 
-1. Understand the user's question.
+1. Understand the user's current question.
 
-2. Inspect the supplied dataset information.
+2. Consider the previous conversation.
 
-3. Identify the relevant columns.
+3. Inspect the supplied dataset information.
 
-4. Never assume that columns from another
+4. Identify the relevant columns.
+
+5. Never assume that columns from another
    dataset exist.
 
-5. Check data quality when relevant.
+6. Check data quality when relevant.
 
-6. Create a plan for complex questions.
+7. Create a plan for complex questions.
 
-7. Generate Python/Pandas code.
+8. Generate Python/Pandas code.
 
-8. Execute the code using execute_analysis.
+9. Execute the code using execute_analysis.
 
-9. OBSERVE the result.
+10. OBSERVE the result.
 
-10. If the tool returns an error:
+11. If the tool returns an error:
 
     - inspect the error
     - determine the cause
     - correct the code
     - execute again
 
-11. Continue until the analysis succeeds
+12. Continue until the analysis succeeds
     or no useful progress is possible.
 
-12. If visualization is requested,
+13. If visualization is requested,
     use generate_visualization.
 
-13. Only claim a visualization exists if
+14. Only claim a visualization exists if
     the tool returned success=True.
 
---------------------------------------------------
-GENERAL DATA ANALYSIS
---------------------------------------------------
+==================================================
+CONVERSATIONAL MEMORY
+==================================================
+
+You are a conversational AI Data Analyst.
+
+The user may ask follow-up questions.
+
+Examples:
+
+User:
+Which region had the highest sales?
+
+User:
+What is its average quantity?
+
+Here, "its" refers to the region identified
+in the previous answer.
+
+Another example:
+
+User:
+Which product had the highest sales?
+
+User:
+How much quantity did it sell?
+
+"it" refers to the product identified previously.
+
+Another example:
+
+User:
+Show me sales by region.
+
+User:
+Now make a chart for that.
+
+"that" refers to the previous analysis.
+
+Another example:
+
+User:
+Which region performed best?
+
+User:
+Compare it with North.
+
+"it" refers to the region identified previously.
+
+IMPORTANT:
+
+Do NOT treat every question as independent.
+
+Use the previous conversation history to
+resolve references such as:
+
+- it
+- its
+- they
+- them
+- that
+- this
+- those
+- the previous result
+- the highest one
+- the lowest one
+- the first one
+- the second one
+- that region
+- that product
+
+However, if the user asks a completely new
+question, analyze it independently.
+
+Do not repeat the entire previous answer
+unless needed.
+
+==================================================
+DATA ANALYSIS
+==================================================
 
 The dataset can contain ANY columns.
 
@@ -238,9 +318,9 @@ or any other Titanic-specific columns exist.
 Always use the actual dataset information
 provided in the prompt.
 
---------------------------------------------------
+==================================================
 DATA QUALITY
---------------------------------------------------
+==================================================
 
 Pay attention to:
 
@@ -253,9 +333,9 @@ Pay attention to:
 
 Do not blindly remove or modify data.
 
---------------------------------------------------
+==================================================
 ERROR RECOVERY
---------------------------------------------------
+==================================================
 
 If execute_analysis returns:
 
@@ -266,13 +346,17 @@ read:
 error
 error_type
 
-Then correct the code and try again.
+Then:
+
+1. Understand the error.
+2. Correct the code.
+3. Execute again.
 
 Do NOT repeat the same failed code.
 
---------------------------------------------------
+==================================================
 COMMON PANDAS PATTERNS
---------------------------------------------------
+==================================================
 
 Filtering:
 
@@ -320,9 +404,9 @@ df["column1"].corr(
     df["column2"]
 )
 
---------------------------------------------------
+==================================================
 IMPORTANT RULES
---------------------------------------------------
+==================================================
 
 Never invent numbers.
 
@@ -340,9 +424,9 @@ Do not create visualizations unless:
 OR
 - visualization is clearly useful.
 
---------------------------------------------------
+==================================================
 VISUALIZATION
---------------------------------------------------
+==================================================
 
 Use Matplotlib only.
 
@@ -361,7 +445,59 @@ The visualization tool handles saving.
 
 
 # ============================================================
-# AGENT FUNCTION
+# DATASET CONTEXT
+# ============================================================
+
+def get_dataset_context(df):
+    """
+    Get structured information about the dataset.
+    """
+
+    dataset_info = inspect_dataset(df)
+
+    return json.dumps(
+        dataset_info,
+        indent=2
+    )
+
+
+# ============================================================
+# CONVERSATION CONTEXT
+# ============================================================
+
+def get_conversation_context():
+    """
+    Convert previous user/assistant turns into
+    a clean context string.
+    """
+
+    if not conversation_history:
+        return "No previous conversation."
+
+    context = ""
+
+    for i, turn in enumerate(
+        conversation_history,
+        start=1
+    ):
+
+        context += f"""
+
+--- Conversation Turn {i} ---
+
+USER:
+{turn["user"]}
+
+ASSISTANT:
+{turn["assistant"]}
+
+"""
+
+    return context
+
+
+# ============================================================
+# RUN AGENT
 # ============================================================
 
 def run_agent(
@@ -402,18 +538,28 @@ def run_agent(
         user_question
     )
 
+
     # --------------------------------------------------------
-    # Inspect dataset
+    # Dataset information
     # --------------------------------------------------------
 
-    dataset_info = inspect_dataset(
+    dataset_context = get_dataset_context(
         df
     )
 
-    dataset_context = json.dumps(
-        dataset_info,
-        indent=2
+
+    # --------------------------------------------------------
+    # Previous conversation
+    # --------------------------------------------------------
+
+    conversation_context = (
+        get_conversation_context()
     )
+
+
+    # --------------------------------------------------------
+    # Prompt
+    # --------------------------------------------------------
 
     prompt = f"""
 Currently selected dataset:
@@ -424,15 +570,37 @@ Dataset information:
 
 {dataset_context}
 
-User question:
+==================================================
+PREVIOUS CONVERSATION
+==================================================
+
+{conversation_context}
+
+==================================================
+CURRENT USER QUESTION
+==================================================
 
 {user_question}
 
-Analyze the question carefully.
+==================================================
 
-Use the available tools to calculate
-the actual answer.
+Analyze the CURRENT question.
+
+Use previous conversation when the current
+question refers to something discussed earlier.
+
+Resolve words such as "it", "its", "that",
+"this", "the previous one", etc. using context.
+
+Use tools to calculate the actual answer.
+
+Do not invent values.
 """
+
+
+    # --------------------------------------------------------
+    # Gemini conversation for THIS turn
+    # --------------------------------------------------------
 
     contents = [
         {
@@ -446,6 +614,7 @@ the actual answer.
         }
     ]
 
+
     # --------------------------------------------------------
     # State
     # --------------------------------------------------------
@@ -456,9 +625,10 @@ the actual answer.
 
     max_iterations = 8
 
-    # --------------------------------------------------------
-    # Agent loop
-    # --------------------------------------------------------
+
+    # ========================================================
+    # AGENT LOOP
+    # ========================================================
 
     for iteration in range(
         max_iterations
@@ -469,25 +639,36 @@ the actual answer.
             f"{iteration + 1} ====="
         )
 
+
         response = client.models.generate_content(
+
             model=MODEL_NAME,
 
             contents=contents,
 
             config={
+
                 "system_instruction":
                     SYSTEM_PROMPT,
 
                 "tools": [
                     {
                         "function_declarations": [
+
                             execute_analysis_tool,
+
                             generate_visualization_tool
+
                         ]
                     }
                 ]
             }
         )
+
+
+        # ----------------------------------------------------
+        # Function calls
+        # ----------------------------------------------------
 
         function_calls = []
 
@@ -497,24 +678,35 @@ the actual answer.
                 response.function_calls
             )
 
-        # ----------------------------------------------------
-        # No tool call
-        # ----------------------------------------------------
+
+        # ====================================================
+        # NO TOOL CALL
+        # ====================================================
 
         if not function_calls:
 
             final_text = response.text
 
+
+            # ------------------------------------------------
+            # Visualization check
+            # ------------------------------------------------
+
             wants_visualization = any(
+
                 keyword in user_question.lower()
+
                 for keyword in [
+
                     "visualization",
                     "visualize",
                     "chart",
                     "graph",
                     "plot"
+
                 ]
             )
+
 
             if (
                 wants_visualization
@@ -542,19 +734,36 @@ the actual answer.
 
                 continue
 
+
+            # ------------------------------------------------
+            # SAVE MEMORY
+            # ------------------------------------------------
+
+            conversation_history.append(
+                {
+                    "user": user_question,
+
+                    "assistant": final_text
+                }
+            )
+
+
             return final_text
 
-        # ----------------------------------------------------
-        # Execute tools
-        # ----------------------------------------------------
+
+        # ====================================================
+        # EXECUTE TOOLS
+        # ====================================================
 
         tool_results = []
+
 
         for function_call in function_calls:
 
             tool_name = function_call.name
 
             tool_args = function_call.args
+
 
             print(
                 "\n===== TOOL CALL ====="
@@ -572,8 +781,9 @@ the actual answer.
                 tool_args
             )
 
+
             # ================================================
-            # ANALYSIS
+            # EXECUTE ANALYSIS
             # ================================================
 
             if tool_name == "execute_analysis":
@@ -587,6 +797,7 @@ the actual answer.
                     df
                 )
 
+
                 print(
                     "\n===== TOOL RESULT ====="
                 )
@@ -595,15 +806,18 @@ the actual answer.
                     result
                 )
 
+
                 tool_results.append(
                     {
                         "name": tool_name,
+
                         "result": result
                     }
                 )
 
+
             # ================================================
-            # VISUALIZATION
+            # GENERATE VISUALIZATION
             # ================================================
 
             elif (
@@ -620,12 +834,14 @@ the actual answer.
                     df
                 )
 
+
                 visualization_completed = (
                     result.get(
                         "success",
                         False
                     )
                 )
+
 
                 if visualization_completed:
 
@@ -635,6 +851,7 @@ the actual answer.
                         )
                     )
 
+
                 print(
                     "\n===== TOOL RESULT ====="
                 )
@@ -643,16 +860,19 @@ the actual answer.
                     result
                 )
 
+
                 tool_results.append(
                     {
                         "name": tool_name,
+
                         "result": result
                     }
                 )
 
-        # ----------------------------------------------------
-        # Send results back to Gemini
-        # ----------------------------------------------------
+
+        # ====================================================
+        # SEND TOOL RESULTS BACK TO GEMINI
+        # ====================================================
 
         contents.append(
             {
@@ -662,15 +882,20 @@ the actual answer.
 
                     {
                         "function_call": {
+
                             "name": call.name,
+
                             "args": call.args
+
                         }
                     }
 
                     for call in function_calls
+
                 ]
             }
         )
+
 
         contents.append(
             {
@@ -680,12 +905,15 @@ the actual answer.
 
                     {
                         "text": (
+
                             "Tool results:\n"
+
                             + json.dumps(
                                 tool_results,
                                 default=str,
                                 indent=2
                             )
+
                             + """
 
 Continue the task.
@@ -704,6 +932,7 @@ Use the actual dataset columns.
 If visualization was explicitly requested
 and has not succeeded, generate it.
 """
+
                         )
                     }
 
@@ -711,11 +940,37 @@ and has not succeeded, generate it.
             }
         )
 
-    return (
+
+    # ========================================================
+    # MAX ITERATIONS
+    # ========================================================
+
+    final_text = (
         "The agent reached its maximum "
         "number of iterations before "
         "completing the task."
     )
+
+
+    conversation_history.append(
+        {
+            "user": user_question,
+
+            "assistant": final_text
+        }
+    )
+
+
+    return final_text
+
+
+# ============================================================
+# RESET MEMORY
+# ============================================================
+
+def reset_conversation():
+
+    conversation_history.clear()
 
 
 # ============================================================
@@ -726,6 +981,7 @@ if __name__ == "__main__":
 
     dataset_name = choose_dataset()
 
+
     if dataset_name is None:
 
         print(
@@ -733,6 +989,7 @@ if __name__ == "__main__":
         )
 
         exit()
+
 
     try:
 
@@ -748,8 +1005,9 @@ if __name__ == "__main__":
 
         exit()
 
+
     print(
-        f"\nDataset loaded successfully."
+        "\nDataset loaded successfully."
     )
 
     print(
@@ -760,28 +1018,131 @@ if __name__ == "__main__":
         f"Columns: {df.shape[1]}"
     )
 
-    question = input(
-        "\nAsk your AI Data Analyst: "
-    )
 
-    answer = run_agent(
-        question,
-        df,
-        dataset_name
+    # ========================================================
+    # CONVERSATIONAL MODE
+    # ========================================================
+
+    print()
+    print("=" * 60)
+    print("CONVERSATIONAL MODE")
+    print("=" * 60)
+
+    print()
+    print(
+        "Ask questions about your dataset."
     )
 
     print(
-        "\n" + "=" * 60
+        "Type 'exit' or 'quit' to stop."
     )
 
     print(
-        "FINAL ANSWER"
+        "Type 'clear' to reset conversation memory."
     )
 
-    print(
-        "=" * 60
-    )
+    print()
 
-    print(
-        answer
-    )
+
+    while True:
+
+        try:
+
+            question = input(
+                "You: "
+            ).strip()
+
+        except (
+            KeyboardInterrupt,
+            EOFError
+        ):
+
+            print(
+                "\nGoodbye!"
+            )
+
+            break
+
+
+        # ----------------------------------------------------
+        # Empty input
+        # ----------------------------------------------------
+
+        if not question:
+
+            print(
+                "Please enter a question."
+            )
+
+            continue
+
+
+        # ----------------------------------------------------
+        # EXIT
+        # ----------------------------------------------------
+
+        if question.lower() in [
+            "exit",
+            "quit"
+        ]:
+
+            print()
+            print(
+                "Goodbye! 👋"
+            )
+
+            break
+
+
+        # ----------------------------------------------------
+        # CLEAR MEMORY
+        # ----------------------------------------------------
+
+        if question.lower() == "clear":
+
+            reset_conversation()
+
+            print()
+            print(
+                "Conversation memory cleared."
+            )
+            print()
+
+            continue
+
+
+        # ----------------------------------------------------
+        # RUN AGENT
+        # ----------------------------------------------------
+
+        try:
+
+            answer = run_agent(
+                question,
+                df,
+                dataset_name
+            )
+
+            print()
+            print(
+                "FINAL ANSWER:"
+            )
+
+            print(
+                answer
+            )
+
+            print()
+
+        except Exception as e:
+
+            print()
+            print(
+                "Agent Error:"
+            )
+
+            print(
+                str(e)
+            )
+
+            print()

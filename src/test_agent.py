@@ -1,9 +1,14 @@
 from data_loader import choose_dataset, load_csv
-from agent import run_agent
+from agent import run_agent, reset_conversation
 
+
+# ============================================================
+# PHASE 9
+# CONVERSATIONAL AI DATA ANALYST
+# ============================================================
 
 print("=" * 60)
-print("AI DATA ANALYST - PHASE 8 TEST")
+print("AI DATA ANALYST - PHASE 9")
 print("=" * 60)
 
 
@@ -17,7 +22,7 @@ dataset_name = choose_dataset()
 if dataset_name is None:
 
     print(
-        "No CSV datasets available."
+        "\nNo dataset selected."
     )
 
     exit()
@@ -36,14 +41,21 @@ try:
 except Exception as e:
 
     print(
-        f"Error loading dataset: {e}"
+        f"\nError loading dataset: {e}"
     )
 
     exit()
 
 
+print()
 print(
-    "\nDataset loaded successfully."
+    f"Selected dataset: {dataset_name}"
+)
+
+print()
+
+print(
+    "Dataset loaded successfully."
 )
 
 print(
@@ -56,55 +68,130 @@ print(
 
 
 # ============================================================
-# QUESTIONS
+# CONVERSATION
 # ============================================================
 
-questions = [
+print()
+print("#" * 60)
+print("CONVERSATIONAL MODE")
+print("#" * 60)
 
-    "Give me a summary of this dataset.",
+print()
+print(
+    "Ask any question about your dataset."
+)
 
-    "Which columns have missing values?",
+print(
+    "Type 'exit' or 'quit' to stop."
+)
 
-    "What are the main numerical columns?",
+print(
+    "Type 'clear' to clear conversation memory."
+)
 
-    "Show me the top 10 records based on the "
-    "most appropriate numerical column."
-
-]
+print()
 
 
-# ============================================================
-# RUN QUESTIONS
-# ============================================================
+while True:
 
-for question in questions:
+    try:
 
-    print(
-        "\n" + "#" * 60
-    )
+        question = input(
+            "You: "
+        ).strip()
 
-    print(
-        "QUESTION:"
-    )
+    except (
+        KeyboardInterrupt,
+        EOFError
+    ):
 
-    print(
-        question
-    )
+        print(
+            "\nGoodbye!"
+        )
 
-    print(
-        "#" * 60
-    )
+        break
 
-    answer = run_agent(
-        question,
-        df,
-        dataset_name
-    )
 
-    print(
-        "\nFINAL ANSWER:"
-    )
+    # --------------------------------------------------------
+    # Empty question
+    # --------------------------------------------------------
 
-    print(
-        answer
-    )
+    if not question:
+
+        print(
+            "Please enter a question."
+        )
+
+        continue
+
+
+    # --------------------------------------------------------
+    # EXIT
+    # --------------------------------------------------------
+
+    if question.lower() in [
+        "exit",
+        "quit"
+    ]:
+
+        print()
+        print(
+            "Goodbye! 👋"
+        )
+
+        break
+
+
+    # --------------------------------------------------------
+    # CLEAR MEMORY
+    # --------------------------------------------------------
+
+    if question.lower() == "clear":
+
+        reset_conversation()
+
+        print()
+        print(
+            "Conversation memory cleared."
+        )
+
+        print()
+
+        continue
+
+
+    # --------------------------------------------------------
+    # ASK AGENT
+    # --------------------------------------------------------
+
+    try:
+
+        answer = run_agent(
+            question,
+            df,
+            dataset_name
+        )
+
+        print()
+        print(
+            "AI:"
+        )
+
+        print(
+            answer
+        )
+
+        print()
+
+    except Exception as e:
+
+        print()
+        print(
+            "Agent Error:"
+        )
+
+        print(
+            str(e)
+        )
+
+        print()
