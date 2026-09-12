@@ -1,0 +1,11 @@
+Product,Region,Sales,Quantity
+Laptop,North,75000,5
+Phone,South,45000,10
+Laptop,South,60000,4
+Tablet,East,30000,8
+Phone,West,55000,12
+Laptop,East,90000,6
+Tablet,North,25000,5
+Phone,East,40000,9
+Laptop,West,85000,5
+Tablet,South,35000,7

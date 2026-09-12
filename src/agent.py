@@ -12,6 +12,8 @@ from tools import (
     generate_visualization
 )
 
+from data_loader import choose_dataset, load_csv
+
 
 # ============================================================
 # ENVIRONMENT
@@ -50,7 +52,8 @@ execute_analysis_tool = {
     "name": "execute_analysis",
 
     "description": """
-Execute Python Pandas analysis on the dataset.
+Execute Python Pandas analysis on the currently
+selected CSV dataset.
 
 The dataframe is available as:
 
@@ -108,7 +111,7 @@ generate_visualization_tool = {
     "name": "generate_visualization",
 
     "description": """
-Generate a data visualization using Matplotlib.
+Generate a visualization using Matplotlib.
 
 Available variables:
 
@@ -171,12 +174,11 @@ pie or bar chart
 
 SYSTEM_PROMPT = """
 
-You are an AI Data Analyst agent.
+You are a general-purpose AI Data Analyst agent.
 
-Your job is to analyze arbitrary tabular datasets
-using Python and Pandas.
+You analyze ANY CSV dataset supplied by the user.
 
-You are an AGENT, not a simple chatbot.
+You are NOT limited to a specific dataset.
 
 --------------------------------------------------
 CORE WORKFLOW
@@ -184,34 +186,57 @@ CORE WORKFLOW
 
 1. Understand the user's question.
 
-2. Inspect the dataset information.
+2. Inspect the supplied dataset information.
 
-3. Identify relevant columns.
+3. Identify the relevant columns.
 
-4. Check data quality when relevant.
+4. Never assume that columns from another
+   dataset exist.
 
-5. Create a plan for complex questions.
+5. Check data quality when relevant.
 
-6. Generate Python/Pandas code.
+6. Create a plan for complex questions.
 
-7. Execute the code using execute_analysis.
+7. Generate Python/Pandas code.
 
-8. OBSERVE the tool result.
+8. Execute the code using execute_analysis.
 
-9. If the tool returns an error:
-   - understand the error
-   - identify the likely cause
-   - generate corrected code
-   - execute again
+9. OBSERVE the result.
 
-10. Continue until the analysis succeeds
+10. If the tool returns an error:
+
+    - inspect the error
+    - determine the cause
+    - correct the code
+    - execute again
+
+11. Continue until the analysis succeeds
     or no useful progress is possible.
 
-11. If visualization is requested:
+12. If visualization is requested,
     use generate_visualization.
 
-12. Only claim a visualization exists if
+13. Only claim a visualization exists if
     the tool returned success=True.
+
+--------------------------------------------------
+GENERAL DATA ANALYSIS
+--------------------------------------------------
+
+The dataset can contain ANY columns.
+
+Do not assume:
+
+Age
+Fare
+Survived
+Pclass
+Sex
+
+or any other Titanic-specific columns exist.
+
+Always use the actual dataset information
+provided in the prompt.
 
 --------------------------------------------------
 DATA QUALITY
@@ -221,77 +246,42 @@ Pay attention to:
 
 - missing values
 - duplicate rows
-- incorrect column names
 - data types
 - empty results
-- invalid operations
+- invalid column names
+- invalid calculations
 
 Do not blindly remove or modify data.
-
-If missing values are relevant:
-
-- inspect them
-- understand their impact
-- choose a sensible analytical approach
-
-Remember that Pandas functions such as mean()
-often ignore NaN values automatically.
 
 --------------------------------------------------
 ERROR RECOVERY
 --------------------------------------------------
 
-IMPORTANT:
-
-Errors are NOT final failures.
-
 If execute_analysis returns:
 
 success=False
 
-inspect:
+read:
 
 error
 error_type
 
-Then fix the generated code and try again.
+Then correct the code and try again.
 
-Example:
-
-Generated code:
-
-result = df["salary"].mean()
-
-Error:
-
-KeyError: 'salary'
-
-Look at the dataset columns.
-
-If the actual column is:
-
-Salary
-
-generate:
-
-result = df["Salary"].mean()
-
-Then execute again.
-
-Do NOT repeatedly generate the same failed code.
+Do NOT repeat the same failed code.
 
 --------------------------------------------------
-ANALYSIS PATTERNS
+COMMON PANDAS PATTERNS
 --------------------------------------------------
 
 Filtering:
 
-df[df["Age"] > 50]
+df[df["column"] > value]
 
 Sorting:
 
 df.sort_values(
-    "Fare",
+    "column",
     ascending=False
 )
 
@@ -299,20 +289,20 @@ Top N:
 
 df.nlargest(
     10,
-    "Fare"
+    "column"
 )
 
 Grouping:
 
 df.groupby(
-    "Pclass"
-)["Fare"].mean()
+    "category"
+)["value"].mean()
 
 Multiple statistics:
 
 df.groupby(
-    "Pclass"
-)["Fare"].agg(
+    "category"
+)["value"].agg(
     ["mean", "median", "min", "max"]
 )
 
@@ -326,8 +316,8 @@ df.duplicated().sum()
 
 Correlation:
 
-df["Age"].corr(
-    df["Fare"]
+df["column1"].corr(
+    df["column2"]
 )
 
 --------------------------------------------------
@@ -340,27 +330,21 @@ Never guess results.
 
 Always use tools for calculations.
 
-Use actual dataset column names.
+Use actual column names.
 
 Validate results before answering.
 
-Keep final answers concise and understandable.
+Do not create visualizations unless:
+
+- the user explicitly asks for one
+OR
+- visualization is clearly useful.
 
 --------------------------------------------------
 VISUALIZATION
 --------------------------------------------------
 
-Only create a visualization when:
-
-- user explicitly asks for one
-OR
-- visualization is clearly necessary to answer the question.
-
-Do not automatically create charts for every question.
-
-Use:
-
-Matplotlib only.
+Use Matplotlib only.
 
 Do not use:
 
@@ -377,33 +361,54 @@ The visualization tool handles saving.
 
 
 # ============================================================
-# LOAD DATA
+# AGENT FUNCTION
 # ============================================================
 
-DATA_PATH = "data/train.csv"
+def run_agent(
+    user_question,
+    df,
+    dataset_name
+):
 
-df = pd.read_csv(
-    DATA_PATH
-)
+    print(
+        "\n" + "=" * 60
+    )
 
+    print(
+        "SELECTED DATASET"
+    )
 
-# ============================================================
-# AGENT
-# ============================================================
+    print(
+        "=" * 60
+    )
 
-def run_agent(user_question):
+    print(
+        dataset_name
+    )
 
-    print("\n" + "=" * 60)
-    print("USER QUESTION")
-    print("=" * 60)
+    print(
+        "\n" + "=" * 60
+    )
 
-    print(user_question)
+    print(
+        "USER QUESTION"
+    )
+
+    print(
+        "=" * 60
+    )
+
+    print(
+        user_question
+    )
 
     # --------------------------------------------------------
     # Inspect dataset
     # --------------------------------------------------------
 
-    dataset_info = inspect_dataset(df)
+    dataset_info = inspect_dataset(
+        df
+    )
 
     dataset_context = json.dumps(
         dataset_info,
@@ -411,6 +416,10 @@ def run_agent(user_question):
     )
 
     prompt = f"""
+Currently selected dataset:
+
+{dataset_name}
+
 Dataset information:
 
 {dataset_context}
@@ -440,8 +449,6 @@ the actual answer.
     # --------------------------------------------------------
     # State
     # --------------------------------------------------------
-
-    analysis_completed = False
 
     visualization_completed = False
 
@@ -538,7 +545,7 @@ the actual answer.
             return final_text
 
         # ----------------------------------------------------
-        # Tool results
+        # Execute tools
         # ----------------------------------------------------
 
         tool_results = []
@@ -561,7 +568,9 @@ the actual answer.
                 "Arguments:"
             )
 
-            print(tool_args)
+            print(
+                tool_args
+            )
 
             # ================================================
             # ANALYSIS
@@ -578,23 +587,17 @@ the actual answer.
                     df
                 )
 
-                analysis_completed = (
-                    result.get(
-                        "success",
-                        False
-                    )
-                )
-
                 print(
                     "\n===== TOOL RESULT ====="
                 )
 
-                print(result)
+                print(
+                    result
+                )
 
                 tool_results.append(
                     {
                         "name": tool_name,
-
                         "result": result
                     }
                 )
@@ -636,12 +639,13 @@ the actual answer.
                     "\n===== TOOL RESULT ====="
                 )
 
-                print(result)
+                print(
+                    result
+                )
 
                 tool_results.append(
                     {
                         "name": tool_name,
-
                         "result": result
                     }
                 )
@@ -686,8 +690,6 @@ the actual answer.
 
 Continue the task.
 
-IMPORTANT:
-
 If a tool failed:
 
 1. Read the error.
@@ -697,8 +699,7 @@ If a tool failed:
 
 Do not repeat the same failed code.
 
-If the analysis is successful,
-use the result to answer the user.
+Use the actual dataset columns.
 
 If visualization was explicitly requested
 and has not succeeded, generate it.
@@ -723,12 +724,50 @@ and has not succeeded, generate it.
 
 if __name__ == "__main__":
 
+    dataset_name = choose_dataset()
+
+    if dataset_name is None:
+
+        print(
+            "No dataset available."
+        )
+
+        exit()
+
+    try:
+
+        df = load_csv(
+            dataset_name
+        )
+
+    except Exception as e:
+
+        print(
+            f"\nError loading dataset: {e}"
+        )
+
+        exit()
+
+    print(
+        f"\nDataset loaded successfully."
+    )
+
+    print(
+        f"Rows: {df.shape[0]}"
+    )
+
+    print(
+        f"Columns: {df.shape[1]}"
+    )
+
     question = input(
         "\nAsk your AI Data Analyst: "
     )
 
     answer = run_agent(
-        question
+        question,
+        df,
+        dataset_name
     )
 
     print(
@@ -743,14 +782,6 @@ if __name__ == "__main__":
         "=" * 60
     )
 
-    print(answer)
-
-    if visualization_path:
-
-        print(
-            "\nVisualization saved at:"
-        )
-
-        print(
-            visualization_path
-        )
+    print(
+        answer
+    )
