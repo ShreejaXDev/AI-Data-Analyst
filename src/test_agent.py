@@ -1,90 +1,37 @@
-import pandas as pd
-
 from agent import run_agent
 
 
-# ==================================================
-# START
-# ==================================================
-
-print(
-    "STEP 1: Starting AI Data Analyst..."
-)
+print("=" * 60)
+print("AI DATA ANALYST - PHASE 6 TEST")
+print("=" * 60)
 
 
-# ==================================================
-# LOAD DATASET
-# ==================================================
+questions = [
 
-df = pd.read_csv(
-    "data/train.csv"
-)
+    "Which passenger class had the highest survival rate?",
 
+    "Show me the top 10 passengers who paid the highest fare.",
 
-print(
-    "\nSTEP 2: Dataset loaded"
-)
+    "Which columns have missing values?",
 
-print(
-    "Shape:",
-    df.shape
-)
+    "What is the average age of passengers?",
 
-print(
-    "Columns:",
-    df.columns.tolist()
-)
+    "What is the relationship between Age and Fare?",
+
+    "Compare the survival rate of males and females."
+
+]
 
 
-# ==================================================
-# USER QUESTION
-# ==================================================
-question = """
-Show me the survival rate for each passenger class
-and create an appropriate visualization.
-"""
+for question in questions:
 
+    print("\n")
+    print("#" * 60)
+    print("QUESTION:")
+    print(question)
+    print("#" * 60)
 
-print(
-    "\nSTEP 3: Sending question to agent..."
-)
+    answer = run_agent(question)
 
-print(
-    "Question:",
-    question
-)
-
-
-# ==================================================
-# RUN AGENT
-# ==================================================
-
-final_answer = run_agent(
-    question,
-    df
-)
-
-
-# ==================================================
-# FINAL RESULT
-# ==================================================
-
-print(
-    "\nSTEP 4: Agent finished"
-)
-
-print(
-    "\n======================================"
-)
-
-print(
-    "FINAL ANSWER"
-)
-
-print(
-    "======================================"
-)
-
-print(
-    final_answer
-)
+    print("\nFINAL ANSWER:")
+    print(answer)
