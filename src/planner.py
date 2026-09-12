@@ -353,3 +353,76 @@ def parse_execution_update(response_text):
     )
 
     return update
+
+
+# ============================================================
+# DECISION VALIDATION & PARSING (PHASE 12)
+# ============================================================
+
+def validate_decision(decision_dict):
+    """
+    Validate the structure of a Phase 12 decision response.
+    """
+
+    if not isinstance(decision_dict, dict):
+        return False
+
+    if "decision" not in decision_dict:
+        return False
+
+    decision_value = str(decision_dict["decision"]).upper()
+
+    allowed_decisions = ["ANALYZE", "VISUALIZE", "REPLAN", "FINISH"]
+
+    if decision_value not in allowed_decisions:
+        return False
+
+    return True
+
+
+def create_fallback_decision(reason="Default fallback action."):
+    """
+    Safe fallback if Gemini returns invalid decision output.
+    """
+
+    return {
+        "decision": "ANALYZE",
+        "reason": reason,
+        "next_action": "Analyze the user's question using available dataset columns."
+    }
+
+
+def parse_decision_response(response_text):
+    """
+    Safely parse Gemini's structured decision response.
+    """
+
+    if not response_text:
+        return create_fallback_decision("Empty response received.")
+
+    text = response_text.strip()
+
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+
+    if text.endswith("```"):
+        text = text[:-3]
+
+    text = text.strip()
+
+    try:
+        decision_dict = json.loads(text)
+    except json.JSONDecodeError:
+        return create_fallback_decision("Invalid JSON syntax in decision response.")
+
+    if not validate_decision(decision_dict):
+        return create_fallback_decision("Decision dictionary structure invalid.")
+
+    # Normalize decision value
+    decision_dict["decision"] = str(decision_dict["decision"]).upper()
+    decision_dict.setdefault("reason", "No reason provided.")
+    decision_dict.setdefault("next_action", "Proceed with next logical action.")
+
+    return decision_dict

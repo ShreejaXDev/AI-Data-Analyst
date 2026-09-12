@@ -1,5 +1,6 @@
 import os
 import json
+import time
 
 from dotenv import load_dotenv
 from google import genai
@@ -18,8 +19,47 @@ from data_loader import (
 from planner import (
     validate_plan,
     format_plan,
-    parse_plan_response
+    parse_plan_response,
+    parse_decision_response,
+    create_fallback_decision
 )
+
+
+# ============================================================
+# SAFE GENERATE CONTENT (RATE LIMIT & NETWORK RETRY HANDLING)
+# ============================================================
+
+def safe_generate_content(client, model, contents, config=None, retries=6, delay=10):
+    """
+    Wrapper around client.models.generate_content to handle rate limits (HTTP 429) and network glitches gracefully.
+    """
+    for attempt in range(retries):
+        try:
+            return client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config
+            )
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                if attempt < retries - 1:
+                    wait_time = float(delay)
+                    if "retry in" in err_str:
+                        try:
+                            seconds_str = err_str.split("retry in")[1].split("s")[0].strip()
+                            wait_time = max(float(seconds_str) + 2.0, float(delay))
+                        except Exception:
+                            pass
+                    print(f"\n[RATE LIMIT]: Gemini API 429 rate limit encountered. Retrying in {wait_time:.1f} seconds (Attempt {attempt + 1}/{retries})...")
+                    time.sleep(wait_time)
+                    continue
+            elif "Server disconnected" in err_str or "RemoteProtocolError" in err_str or "ConnectError" in err_str or "ReadTimeout" in err_str:
+                if attempt < retries - 1:
+                    print(f"\n[NETWORK RETRY]: Connection reset or network error ({type(e).__name__}). Retrying in 5 seconds (Attempt {attempt + 1}/{retries})...")
+                    time.sleep(5)
+                    continue
+            raise e
 
 
 # ============================================================
@@ -224,284 +264,39 @@ CORE WORKFLOW
 ==================================================
 
 1. Understand the user's current question.
-
 2. Consider the previous conversation.
-
 3. Use the explicit analysis plan.
-
 4. Inspect the supplied dataset information.
-
 5. Identify the relevant columns.
-
 6. Never assume columns from another dataset exist.
-
 7. Check data quality when relevant.
-
 8. Follow the analysis plan.
-
 9. Generate Python/Pandas code.
-
 10. Execute the code using execute_analysis.
-
 11. OBSERVE the result.
-
-12. Use the result to decide what should
-    happen next.
-
+12. Use the result to decide what should happen next.
 13. If the tool returns an error:
-
     - inspect the error
     - determine the cause
     - correct the code
     - execute again
-
-14. Continue until the analysis succeeds
-    or no useful progress is possible.
-
-15. If visualization is requested,
-    use generate_visualization.
-
-16. Only claim a visualization exists if
-    the tool returned success=True.
-
-==================================================
-PLANNING
-==================================================
-
-The agent receives an explicit plan created
-by a planning component.
-
-The plan describes the logical steps required
-to answer the user's question.
-
-Do not blindly execute every planned step.
-
-After each tool result:
-
-- observe the result
-- determine whether the next planned step
-  is still necessary
-- adapt if the result changes the situation
-
-Planning tells you WHAT needs to happen.
-
-Tool selection and execution determine HOW
-to accomplish it.
+14. Continue until the analysis succeeds or no useful progress is possible.
+15. If visualization is requested, use generate_visualization.
+16. Only claim a visualization exists if the tool returned success=True.
 
 ==================================================
 CONVERSATIONAL MEMORY
 ==================================================
 
-You are a conversational AI Data Analyst.
-
-The user may ask follow-up questions.
-
-Examples:
-
-User:
-Which region had the highest sales?
-
-User:
-What is its average quantity?
-
-Here, "its" refers to the region identified
-in the previous answer.
-
-Another example:
-
-User:
-Which product had the highest sales?
-
-User:
-How much quantity did it sell?
-
-"it" refers to the product identified previously.
-
-Another example:
-
-User:
-Show me sales by region.
-
-User:
-Now make a chart for that.
-
-"that" refers to the previous analysis.
-
-Another example:
-
-User:
-Which region performed best?
-
-User:
-Compare it with North.
-
-"it" refers to the region identified previously.
-
-IMPORTANT:
-
-Do NOT treat every question as independent.
-
-Use previous conversation history to resolve:
-
-- it
-- its
-- they
-- them
-- that
-- this
-- those
-- the previous result
-- the highest one
-- the lowest one
-- the first one
-- the second one
-- that region
-- that product
-
-If the user asks a completely new question,
-analyze it independently.
-
-==================================================
-DATA ANALYSIS
-==================================================
-
-The dataset can contain ANY columns.
-
-Do not assume:
-
-Age
-Fare
-Survived
-Pclass
-Sex
-
-or any other Titanic-specific columns exist.
-
-Always use actual dataset information.
-
-==================================================
-DATA QUALITY
-==================================================
-
-Pay attention to:
-
-- missing values
-- duplicate rows
-- data types
-- empty results
-- invalid column names
-- invalid calculations
-
-Do not blindly remove or modify data.
-
-==================================================
-ERROR RECOVERY
-==================================================
-
-If execute_analysis returns:
-
-success=False
-
-read:
-
-error
-error_type
-
-Then:
-
-1. Understand the error.
-2. Correct the code.
-3. Execute again.
-
-Do NOT repeat the same failed code.
-
-==================================================
-COMMON PANDAS PATTERNS
-==================================================
-
-Filtering:
-
-df[df["column"] > value]
-
-Sorting:
-
-df.sort_values(
-    "column",
-    ascending=False
-)
-
-Top N:
-
-df.nlargest(
-    10,
-    "column"
-)
-
-Grouping:
-
-df.groupby(
-    "category"
-)["value"].mean()
-
-Multiple statistics:
-
-df.groupby(
-    "category"
-)["value"].agg(
-    ["mean", "median", "min", "max"]
-)
-
-Missing values:
-
-df.isnull().sum()
-
-Duplicates:
-
-df.duplicated().sum()
-
-Correlation:
-
-df["column1"].corr(
-    df["column2"]
-)
-
-==================================================
-IMPORTANT RULES
-==================================================
-
-Never invent numbers.
-
-Never guess results.
-
-Always use tools for calculations.
-
-Use actual column names.
-
-Validate results before answering.
-
-Do not create visualizations unless:
-
-- the user explicitly asks for one
-OR
-- visualization is clearly useful.
+The user may ask follow-up questions. Use conversation history to resolve
+references like 'it', 'its', 'they', 'them', 'that', 'that region', 'that product'.
 
 ==================================================
 VISUALIZATION
 ==================================================
 
-Use Matplotlib only.
-
-Do not use:
-
-seaborn
-plotly
-
-Do not call:
-
-plt.savefig()
-plt.close()
-
-The visualization tool handles saving.
+Use Matplotlib only. Do not use seaborn or plotly.
+Do not call plt.savefig() or plt.close().
 """
 
 
@@ -511,7 +306,7 @@ The visualization tool handles saving.
 
 def get_dataset_context(df):
     """
-    Get structured information about the dataset.
+    Get structured smart profile information about the dataset.
     """
 
     dataset_info = inspect_dataset(
@@ -530,8 +325,7 @@ def get_dataset_context(df):
 
 def get_conversation_context():
     """
-    Convert previous conversation turns
-    into clean context for Gemini.
+    Convert previous conversation turns into clean context for Gemini.
     """
 
     if not conversation_history:
@@ -560,6 +354,26 @@ ASSISTANT:
 
 
 # ============================================================
+# CODE EXTRACTION HELPER
+# ============================================================
+
+def extract_code_from_text(text):
+    """
+    Safely extract Python code from markdown blocks if no tool call structure returned.
+    """
+    if not text:
+        return ""
+
+    if "```python" in text:
+        return text.split("```python")[1].split("```")[0].strip()
+
+    if "```" in text:
+        return text.split("```")[1].split("```")[0].strip()
+
+    return text.strip()
+
+
+# ============================================================
 # CREATE EXPLICIT PLAN
 # ============================================================
 
@@ -570,81 +384,43 @@ def create_plan(
     conversation_context
 ):
     """
-    Ask Gemini to create an explicit
-    step-by-step analysis plan.
+    Ask Gemini to create an explicit step-by-step analysis plan.
     """
 
     planner_prompt = f"""
-You are the planning component of an
-AI Data Analyst.
+You are the planning component of an AI Data Analyst.
 
-Your job is to create a clear and practical
-step-by-step plan for answering the user's
-current question.
+Your job is to create a clear and practical step-by-step plan for answering the user's current question.
 
 ==================================================
-DATASET
+DATASET: {dataset_name}
 ==================================================
-
-Dataset name:
-
-{dataset_name}
-
-Dataset information:
-
+DATASET PROFILE:
 {dataset_context}
 
 ==================================================
-PREVIOUS CONVERSATION
-==================================================
-
+PREVIOUS CONVERSATION:
 {conversation_context}
 
 ==================================================
-CURRENT QUESTION
-==================================================
-
+CURRENT QUESTION:
 {user_question}
 
 ==================================================
-PLANNING RULES
-==================================================
-
+PLANNING RULES:
 1. Break complex questions into logical steps.
-
 2. Keep simple questions simple.
-
-3. Do not invent columns.
-
-4. Use actual dataset columns.
-
-5. Include calculations that require
-   Python/Pandas.
-
-6. If the user explicitly requests a chart,
-   graph, plot, or visualization, include
-   visualization as a plan step.
-
-7. Do not perform the analysis.
-
-8. Do not invent numerical results.
-
-9. Resolve follow-up references using the
-   previous conversation when possible.
-
-10. Return ONLY valid JSON.
+3. Do not invent columns. Use actual dataset columns from profile.
+4. Include calculations that require Python/Pandas.
+5. If the user explicitly requests a chart, graph, plot, or visualization, include visualization as a plan step.
+6. Return ONLY valid JSON.
 
 Required format:
-
 {{
     "goal": "overall goal",
     "steps": [
         {{
             "step": 1,
-            "description": "..."
-        }},
-        {{
-            "step": 2,
             "description": "..."
         }}
     ]
@@ -653,12 +429,10 @@ Required format:
 
     try:
 
-        response = client.models.generate_content(
-
+        response = safe_generate_content(
+            client=client,
             model=MODEL_NAME,
-
             contents=planner_prompt,
-
             config={
                 "temperature": 0.1,
                 "response_mime_type": "application/json"
@@ -673,39 +447,178 @@ Required format:
 
     except Exception as e:
 
-        print()
-        print(
-            "Planner warning:"
-        )
-
-        print(
-            str(e)
-        )
-
-        print(
-            "Using fallback plan."
-        )
+        print(f"\nPlanner warning: {e}. Using fallback plan.")
 
         return {
-            "goal": (
-                "Analyze the user's question."
-            ),
-
+            "goal": "Analyze the user's question.",
             "steps": [
                 {
                     "step": 1,
-                    "description": (
-                        "Analyze the user's "
-                        "question using the "
-                        "supplied dataset."
-                    )
+                    "description": "Analyze the user's question using the supplied dataset."
                 }
             ]
         }
 
 
 # ============================================================
-# RUN AGENT
+# PHASE 12: DECIDE NEXT ACTION (AUTONOMOUS DECISION MAKER)
+# ============================================================
+
+def decide_next_action(
+    user_question,
+    dataset_name,
+    dataset_context,
+    conversation_context,
+    plan,
+    completed_actions,
+    visualization_completed
+):
+    """
+    Autonomous decision-making component.
+    Evaluates current evidence against the objective and decides what to do next:
+    ANALYZE, VISUALIZE, REPLAN, or FINISH.
+    """
+
+    decision_prompt = f"""
+You are the autonomous decision-making component of an AI Data Analyst agent.
+
+Your task is to evaluate the evidence gathered so far and decide what action to take next.
+
+==================================================
+DATASET: {dataset_name}
+==================================================
+DATASET PROFILE:
+{dataset_context}
+
+==================================================
+PREVIOUS CONVERSATION:
+{conversation_context}
+
+==================================================
+USER QUESTION:
+{user_question}
+
+==================================================
+EXPLICIT ANALYSIS PLAN:
+{json.dumps(plan, indent=2)}
+
+==================================================
+COMPLETED ACTIONS & EVIDENCE GATHERED:
+{json.dumps(completed_actions, indent=2)}
+
+Visualization already generated: {visualization_completed}
+
+==================================================
+DECISION RULES:
+
+1. SUFFICIENCY CHECK: Ask yourself: "Do I have sufficient concrete evidence in COMPLETED ACTIONS (numerical calculations, groupbys, statistics) to answer the user's question completely?"
+   - If NO actions have been completed in COMPLETED ACTIONS yet → Choose "ANALYZE" to execute the analysis tool first.
+   - If YES (evidence in COMPLETED ACTIONS is sufficient) → Choose "FINISH". Do NOT perform unnecessary or redundant tool calls.
+   - If simple single-step question (e.g. "What is average sales?") and calculation is in COMPLETED ACTIONS → Choose "FINISH".
+
+2. MULTI-STEP INVESTIGATION:
+   - If the user asks "Why" or asks for deeper breakdown, evaluate if more analysis is needed to explain the result.
+   - If more data is needed → Choose "ANALYZE" and describe the specific `next_action`.
+
+3. VISUALIZATION:
+   - If user explicitly requested a chart/plot/graph AND visualization has NOT succeeded yet → Choose "VISUALIZE".
+   - If visualization materially helps illustrate the findings AND has NOT succeeded yet → Choose "VISUALIZE".
+   - Otherwise, do NOT choose "VISUALIZE" just for decoration.
+
+4. REPLANNING:
+   - If intermediate findings make the current plan invalid or suggest a better path → Choose "REPLAN".
+
+5. EFFICIENCY:
+   - Avoid redundant actions. If an action was already completed, do NOT repeat it.
+
+Return ONLY valid JSON matching this schema:
+
+{{
+    "decision": "ANALYZE" | "VISUALIZE" | "REPLAN" | "FINISH",
+    "reason": "Detailed explanation of why this decision was made",
+    "next_action": "Specific operational instruction for the next action (required if ANALYZE, VISUALIZE, or REPLAN)"
+}}
+"""
+
+    try:
+
+        response = safe_generate_content(
+            client=client,
+            model=MODEL_NAME,
+            contents=decision_prompt,
+            config={
+                "temperature": 0.1,
+                "response_mime_type": "application/json"
+            }
+        )
+
+        return parse_decision_response(response.text)
+
+    except Exception as e:
+
+        print(f"\nDecision Maker warning: {e}. Using fallback.")
+
+        if completed_actions:
+            return {
+                "decision": "FINISH",
+                "reason": "Sufficient evidence collected before decision exception.",
+                "next_action": ""
+            }
+
+        return create_fallback_decision(str(e))
+
+
+# ============================================================
+# PHASE 12: GENERATE EVIDENCE-GROUNDED FINAL ANSWER
+# ============================================================
+
+def generate_final_answer(
+    user_question,
+    dataset_name,
+    dataset_context,
+    conversation_context,
+    completed_actions
+):
+    """
+    Generate an evidence-grounded final answer based strictly on tool results.
+    """
+
+    answer_prompt = f"""
+You are an AI Data Analyst. Synthesize a concise, user-friendly final answer to the user's question.
+
+==================================================
+DATASET: {dataset_name}
+USER QUESTION: {user_question}
+==================================================
+PREVIOUS CONVERSATION:
+{conversation_context}
+
+==================================================
+COMPLETED ACTIONS & EVIDENCE GATHERED:
+{json.dumps(completed_actions, indent=2)}
+
+==================================================
+RULES:
+1. Base your answer EXCLUSIVELY on the tool observations in COMPLETED ACTIONS.
+2. Never invent numbers, percentages, or statistics.
+3. If visualization succeeded, mention that a chart was created.
+4. Keep the response clean, professional, concise, and clear.
+"""
+
+    response = safe_generate_content(
+        client=client,
+        model=MODEL_NAME,
+        contents=answer_prompt,
+        config={
+            "temperature": 0.2
+        }
+    )
+
+    return response.text.strip()
+
+
+# ============================================================
+# RUN AGENT (PHASE 12 AUTONOMOUS LOOP)
 # ============================================================
 
 def run_agent(
@@ -715,636 +628,346 @@ def run_agent(
 ):
 
     print()
-    print(
-        "=" * 60
-    )
-
-    print(
-        "SELECTED DATASET"
-    )
-
-    print(
-        "=" * 60
-    )
-
-    print(
-        dataset_name
-    )
+    print("=" * 60)
+    print("SELECTED DATASET")
+    print("=" * 60)
+    print(dataset_name)
 
     print()
-    print(
-        "=" * 60
-    )
+    print("=" * 60)
+    print("USER QUESTION")
+    print("=" * 60)
+    print(user_question)
 
-    print(
-        "USER QUESTION"
-    )
+    # --------------------------------------------------------
+    # CONTEXT PREPARATION
+    # --------------------------------------------------------
 
-    print(
-        "=" * 60
-    )
+    dataset_context = get_dataset_context(df)
+    conversation_context = get_conversation_context()
 
-    print(
-        user_question
-    )
-
-
-    # ========================================================
-    # DATASET CONTEXT
-    # ========================================================
-
-    dataset_context = get_dataset_context(
-        df
-    )
-
-
-    # ========================================================
-    # CONVERSATION CONTEXT
-    # ========================================================
-
-    conversation_context = (
-        get_conversation_context()
-    )
-
-
-    # ========================================================
-    # CREATE PLAN
-    # ========================================================
+    # --------------------------------------------------------
+    # CREATE INITIAL PLAN
+    # --------------------------------------------------------
 
     plan = create_plan(
-
         user_question,
-
         dataset_name,
-
         dataset_context,
-
         conversation_context
-
     )
-
-
-    # ========================================================
-    # DISPLAY PLAN
-    # ========================================================
 
     print()
-    print(
-        "=" * 60
-    )
+    print("=" * 60)
+    print("AGENT PLAN")
+    print("=" * 60)
+    print(format_plan(plan))
+    print("=" * 60)
 
-    print(
-        "AGENT PLAN"
-    )
+    # --------------------------------------------------------
+    # STATE TRACKING
+    # --------------------------------------------------------
 
-    print(
-        "=" * 60
-    )
-
-    print(
-        format_plan(plan)
-    )
-
-    print(
-        "=" * 60
-    )
-
-
-    # ========================================================
-    # MAIN PROMPT
-    # ========================================================
-
-    prompt = f"""
-Currently selected dataset:
-
-{dataset_name}
-
-Dataset information:
-
-{dataset_context}
-
-==================================================
-PREVIOUS CONVERSATION
-==================================================
-
-{conversation_context}
-
-==================================================
-CURRENT USER QUESTION
-==================================================
-
-{user_question}
-
-==================================================
-EXPLICIT ANALYSIS PLAN
-==================================================
-
-{json.dumps(plan, indent=2)}
-
-==================================================
-
-Follow the explicit plan.
-
-Important:
-
-- Do not blindly execute every step.
-- Use tool results to decide what to do next.
-- If a result changes the situation,
-  adapt the remaining work.
-- Use execute_analysis for calculations.
-- Use generate_visualization only when needed.
-- Observe tool results before continuing.
-- Do not invent values.
-- Use actual dataset columns.
-"""
-
-
-    # ========================================================
-    # GEMINI CONTENTS FOR CURRENT TURN
-    # ========================================================
-
-    contents = [
-
-        {
-            "role": "user",
-
-            "parts": [
-
-                {
-                    "text": prompt
-                }
-
-            ]
-        }
-
-    ]
-
-
-    # ========================================================
-    # STATE
-    # ========================================================
-
+    completed_actions = []
     visualization_completed = False
-
     visualization_path = None
-
     max_iterations = 8
 
+    # --------------------------------------------------------
+    # PHASE 12 AUTONOMOUS DECISION LOOP
+    # --------------------------------------------------------
 
-    # ========================================================
-    # AGENT LOOP
-    # ========================================================
-
-    for iteration in range(
-        max_iterations
-    ):
+    for iteration in range(1, max_iterations + 1):
 
         print()
+        print(f"===== AGENT ITERATION {iteration} =====")
 
-        print(
-            f"===== AGENT ITERATION "
-            f"{iteration + 1} ====="
+        # 1. Decision Maker decides next action
+        decision_info = decide_next_action(
+            user_question,
+            dataset_name,
+            dataset_context,
+            conversation_context,
+            plan,
+            completed_actions,
+            visualization_completed
         )
 
+        decision = decision_info.get("decision", "ANALYZE")
+        reason = decision_info.get("reason", "")
+        next_action = decision_info.get("next_action", "")
+
+        print(f"\n[DECISION]: {decision}")
+        print(f"[REASON]: {reason}")
+        if next_action:
+            print(f"[NEXT ACTION]: {next_action}")
 
         # ----------------------------------------------------
-        # ASK GEMINI
+        # DECISION: FINISH
         # ----------------------------------------------------
-
-        response = client.models.generate_content(
-
-            model=MODEL_NAME,
-
-            contents=contents,
-
-            config={
-
-                "system_instruction":
-                    SYSTEM_PROMPT,
-
-                "tools": [
-
-                    {
-                        "function_declarations": [
-
-                            execute_analysis_tool,
-
-                            generate_visualization_tool
-
-                        ]
-                    }
-
-                ]
-            }
-        )
-
-
-        # ----------------------------------------------------
-        # GET FUNCTION CALLS
-        # ----------------------------------------------------
-
-        function_calls = []
-
-        if response.function_calls:
-
-            function_calls = (
-                response.function_calls
+        if decision == "FINISH":
+            final_text = generate_final_answer(
+                user_question,
+                dataset_name,
+                dataset_context,
+                conversation_context,
+                completed_actions
             )
 
-
-        # ====================================================
-        # NO TOOL CALL
-        # ====================================================
-
-        if not function_calls:
-
-            final_text = response.text
-
-
-            # ------------------------------------------------
-            # Check visualization request
-            # ------------------------------------------------
-
-            wants_visualization = any(
-
-                keyword in (
-                    user_question.lower()
-                )
-
-                for keyword in [
-
-                    "visualization",
-                    "visualize",
-                    "chart",
-                    "graph",
-                    "plot"
-
-                ]
-            )
-
-
-            if (
-
-                wants_visualization
-
-                and not visualization_completed
-
-            ):
-
-                contents.append(
-
-                    {
-
-                        "role": "user",
-
-                        "parts": [
-
-                            {
-
-                                "text": (
-                                    "The user explicitly "
-                                    "requested a visualization. "
-                                    "You have not successfully "
-                                    "generated one yet. "
-                                    "Please call "
-                                    "generate_visualization."
-                                )
-
-                            }
-
-                        ]
-
-                    }
-
-                )
-
-                continue
-
-
-            # ------------------------------------------------
-            # SAVE CONVERSATION MEMORY
-            # ------------------------------------------------
-
-            conversation_history.append(
-
-                {
-
-                    "user":
-                        user_question,
-
-                    "assistant":
-                        final_text
-
-                }
-
-            )
-
+            conversation_history.append({
+                "user": user_question,
+                "assistant": final_text
+            })
 
             return final_text
 
-
-        # ====================================================
-        # EXECUTE TOOLS
-        # ====================================================
-
-        tool_results = []
-
-
-        for function_call in function_calls:
-
-            tool_name = function_call.name
-
-            tool_args = function_call.args
-
-
+        # ----------------------------------------------------
+        # DECISION: REPLAN
+        # ----------------------------------------------------
+        if decision == "REPLAN":
+            print("\nReplanning based on intermediate findings...")
+            plan = create_plan(
+                user_question + f" (Context update: {reason})",
+                dataset_name,
+                dataset_context,
+                conversation_context
+            )
             print()
-            print(
-                "===== TOOL CALL ====="
-            )
-
-            print(
-                f"Tool: {tool_name}"
-            )
-
-            print(
-                "Arguments:"
-            )
-
-            print(
-                tool_args
-            )
-
-
-            # =================================================
-            # EXECUTE ANALYSIS
-            # =================================================
-
-            if tool_name == "execute_analysis":
-
-                code = tool_args.get(
-                    "code"
-                )
-
-
-                if not code:
-
-                    result = {
-
-                        "success": False,
-
-                        "error":
-                            "No Python code was provided.",
-
-                        "error_type":
-                            "MissingCode"
-
-                    }
-
-                else:
-
-                    result = execute_analysis(
-
-                        code,
-
-                        df
-
-                    )
-
-
-                print()
-                print(
-                    "===== TOOL RESULT ====="
-                )
-
-                print(
-                    result
-                )
-
-
-                tool_results.append(
-
-                    {
-
-                        "name":
-                            tool_name,
-
-                        "result":
-                            result
-
-                    }
-
-                )
-
-
-            # =================================================
-            # GENERATE VISUALIZATION
-            # =================================================
-
-            elif (
-                tool_name ==
-                "generate_visualization"
-            ):
-
-                code = tool_args.get(
-                    "code"
-                )
-
-
-                if not code:
-
-                    result = {
-
-                        "success": False,
-
-                        "error":
-                            "No visualization code "
-                            "was provided.",
-
-                        "error_type":
-                            "MissingCode"
-
-                    }
-
-                else:
-
-                    result = generate_visualization(
-
-                        code,
-
-                        df
-
-                    )
-
-
-                visualization_completed = (
-                    result.get(
-                        "success",
-                        False
-                    )
-                )
-
-
-                if visualization_completed:
-
-                    visualization_path = (
-                        result.get(
-                            "path"
-                        )
-                    )
-
-
-                print()
-                print(
-                    "===== TOOL RESULT ====="
-                )
-
-                print(
-                    result
-                )
-
-
-                tool_results.append(
-
-                    {
-
-                        "name":
-                            tool_name,
-
-                        "result":
-                            result
-
-                    }
-
-                )
-
-
-        # ====================================================
-        # SEND TOOL RESULTS BACK TO GEMINI
-        # ====================================================
-
-        contents.append(
-
-            {
-
-                "role": "model",
-
-                "parts": [
-
-                    {
-
-                        "function_call": {
-
-                            "name":
-                                call.name,
-
-                            "args":
-                                call.args
-
-                        }
-
-                    }
-
-                    for call in function_calls
-
-                ]
-
-            }
-
-        )
-
-
-        contents.append(
-
-            {
-
-                "role": "user",
-
-                "parts": [
-
-                    {
-
-                        "text": (
-
-                            "Tool results:\n"
-
-                            + json.dumps(
-
-                                tool_results,
-
-                                default=str,
-
-                                indent=2
-
-                            )
-
-                            + """
-
-Continue the task.
-
-IMPORTANT:
-
-1. Observe the tool result.
-
-2. Follow the explicit plan.
-
-3. Decide what the next logical step is.
-
-4. If a tool failed:
-
-   - read the error
-   - identify the cause
-   - correct the code
-   - execute again
-
-5. Do not repeat the same failed code.
-
-6. Use actual dataset columns.
-
-7. If visualization was explicitly
-   requested and has not succeeded,
-   generate it.
-
-8. Do not invent results.
+            print("=" * 60)
+            print("NEW AGENT PLAN")
+            print("=" * 60)
+            print(format_plan(plan))
+            print("=" * 60)
+            continue
+
+        # ----------------------------------------------------
+        # DECISION: ANALYZE
+        # ----------------------------------------------------
+        if decision == "ANALYZE":
+
+            code_gen_prompt = f"""
+Dataset: {dataset_name}
+Profile:
+{dataset_context}
+
+Previous conversation:
+{conversation_context}
+
+User question: {user_question}
+Current action goal: {next_action}
+Evidence gathered so far:
+{json.dumps(completed_actions, indent=2)}
+
+Generate Python/Pandas code to accomplish this step.
+Assign the final calculated output to variable `result`.
+DataFrame is available as `df`. Pandas is available as `pd`.
+
+Call execute_analysis(code=...).
 """
 
-                        )
+            resp = safe_generate_content(
+                client=client,
+                model=MODEL_NAME,
+                contents=code_gen_prompt,
+                config={
+                    "system_instruction": SYSTEM_PROMPT,
+                    "tools": [{"function_declarations": [execute_analysis_tool]}]
+                }
+            )
 
+            code = None
+            if resp.function_calls:
+                for fc in resp.function_calls:
+                    if fc.name == "execute_analysis":
+                        code = fc.args.get("code")
+
+            if not code:
+                code = extract_code_from_text(resp.text)
+
+            print()
+            print("===== TOOL CALL =====")
+            print("Tool: execute_analysis")
+            print("Arguments:")
+            print({"code": code})
+
+            if not code:
+                tool_res = {
+                    "success": False,
+                    "error": "No Python code generated.",
+                    "error_type": "MissingCode"
+                }
+            else:
+                tool_res = execute_analysis(code, df)
+
+            # Error Recovery (Phase 7)
+            if not tool_res.get("success", False):
+                print()
+                print("[ERROR RECOVERY]: Tool returned error, attempting fix...")
+                fix_prompt = f"""
+Tool execution failed with error: {tool_res.get('error')}
+Failed code:
+{code}
+Dataset information:
+{dataset_context}
+
+Generate corrected Python code. Assign the result to `result`.
+"""
+                fix_resp = safe_generate_content(
+                    client=client,
+                    model=MODEL_NAME,
+                    contents=fix_prompt,
+                    config={
+                        "system_instruction": SYSTEM_PROMPT,
+                        "tools": [{"function_declarations": [execute_analysis_tool]}]
                     }
+                )
+                fixed_code = None
+                if fix_resp.function_calls:
+                    for fc in fix_resp.function_calls:
+                        if fc.name == "execute_analysis":
+                            fixed_code = fc.args.get("code")
 
-                ]
+                if not fixed_code:
+                    fixed_code = extract_code_from_text(fix_resp.text)
 
-            }
+                if fixed_code:
+                    code = fixed_code
+                    tool_res = execute_analysis(code, df)
 
-        )
+            print()
+            print("===== TOOL RESULT =====")
+            print(tool_res)
 
+            completed_actions.append({
+                "iteration": iteration,
+                "action": "ANALYZE",
+                "description": next_action,
+                "code": code,
+                "result": tool_res
+            })
+            continue
 
-    # ========================================================
-    # MAX ITERATIONS
-    # ========================================================
+        # ----------------------------------------------------
+        # DECISION: VISUALIZE
+        # ----------------------------------------------------
+        if decision == "VISUALIZE":
 
-    final_text = (
+            viz_gen_prompt = f"""
+Dataset: {dataset_name}
+Profile:
+{dataset_context}
 
-        "The agent reached its maximum "
-        "number of iterations before "
-        "completing the task."
+User question: {user_question}
+Visualization goal: {next_action}
+Evidence gathered so far:
+{json.dumps(completed_actions, indent=2)}
 
+Generate Matplotlib visualization code.
+Rules:
+- Matplotlib only. No seaborn, no plotly.
+- Do NOT call plt.savefig() or plt.close().
+- DataFrame is `df`, Pandas is `pd`, Matplotlib.pyplot is `plt`.
+
+Call generate_visualization(code=...).
+"""
+
+            resp = safe_generate_content(
+                client=client,
+                model=MODEL_NAME,
+                contents=viz_gen_prompt,
+                config={
+                    "system_instruction": SYSTEM_PROMPT,
+                    "tools": [{"function_declarations": [generate_visualization_tool]}]
+                }
+            )
+
+            code = None
+            if resp.function_calls:
+                for fc in resp.function_calls:
+                    if fc.name == "generate_visualization":
+                        code = fc.args.get("code")
+
+            if not code:
+                code = extract_code_from_text(resp.text)
+
+            print()
+            print("===== TOOL CALL =====")
+            print("Tool: generate_visualization")
+            print("Arguments:")
+            print({"code": code})
+
+            if not code:
+                tool_res = {
+                    "success": False,
+                    "error": "No visualization code generated.",
+                    "error_type": "MissingCode"
+                }
+            else:
+                tool_res = generate_visualization(code, df)
+
+            # Error Recovery (Phase 7)
+            if not tool_res.get("success", False):
+                print()
+                print("[ERROR RECOVERY]: Visualization failed, attempting fix...")
+                fix_prompt = f"""
+Visualization code failed with error: {tool_res.get('error')}
+Failed code:
+{code}
+
+Generate corrected Matplotlib code.
+"""
+                fix_resp = safe_generate_content(
+                    client=client,
+                    model=MODEL_NAME,
+                    contents=fix_prompt,
+                    config={
+                        "system_instruction": SYSTEM_PROMPT,
+                        "tools": [{"function_declarations": [generate_visualization_tool]}]
+                    }
+                )
+                fixed_code = None
+                if fix_resp.function_calls:
+                    for fc in fix_resp.function_calls:
+                        if fc.name == "generate_visualization":
+                            fixed_code = fc.args.get("code")
+
+                if not fixed_code:
+                    fixed_code = extract_code_from_text(fix_resp.text)
+
+                if fixed_code:
+                    code = fixed_code
+                    tool_res = generate_visualization(code, df)
+
+            print()
+            print("===== TOOL RESULT =====")
+            print(tool_res)
+
+            if tool_res.get("success", False):
+                visualization_completed = True
+                visualization_path = tool_res.get("path")
+
+            completed_actions.append({
+                "iteration": iteration,
+                "action": "VISUALIZE",
+                "description": next_action,
+                "code": code,
+                "result": tool_res
+            })
+            continue
+
+    # Max Iterations reached fallback
+    final_text = generate_final_answer(
+        user_question,
+        dataset_name,
+        dataset_context,
+        conversation_context,
+        completed_actions
     )
 
-
-    conversation_history.append(
-
-        {
-
-            "user":
-                user_question,
-
-            "assistant":
-                final_text
-
-        }
-
-    )
-
+    conversation_history.append({
+        "user": user_question,
+        "assistant": final_text
+    })
 
     return final_text
 
@@ -1370,187 +993,65 @@ if __name__ == "__main__":
 
     dataset_name = choose_dataset()
 
-
     if dataset_name is None:
-
-        print(
-            "No dataset available."
-        )
-
+        print("No dataset available.")
         exit()
-
 
     try:
-
-        df = load_csv(
-            dataset_name
-        )
-
+        df = load_csv(dataset_name)
     except Exception as e:
-
-        print(
-            f"\nError loading dataset: {e}"
-        )
-
+        print(f"\nError loading dataset: {e}")
         exit()
 
+    print()
+    print("Dataset loaded successfully.")
+    print(f"Rows: {df.shape[0]}")
+    print(f"Columns: {df.shape[1]}")
 
     print()
-    print(
-        "Dataset loaded successfully."
-    )
-
-    print(
-        f"Rows: {df.shape[0]}"
-    )
-
-    print(
-        f"Columns: {df.shape[1]}"
-    )
-
-
-    # ========================================================
-    # CONVERSATIONAL MODE
-    # ========================================================
-
+    print("=" * 60)
+    print("CONVERSATIONAL MODE (PHASE 12 AUTONOMOUS AGENT)")
+    print("=" * 60)
     print()
-    print(
-        "=" * 60
-    )
-
-    print(
-        "CONVERSATIONAL MODE"
-    )
-
-    print(
-        "=" * 60
-    )
-
+    print("Ask questions about your dataset.")
+    print("Type 'exit' or 'quit' to stop.")
+    print("Type 'clear' to reset conversation memory.")
     print()
-
-    print(
-        "Ask questions about your dataset."
-    )
-
-    print(
-        "Type 'exit' or 'quit' to stop."
-    )
-
-    print(
-        "Type 'clear' to reset conversation memory."
-    )
-
-    print()
-
 
     while True:
 
         try:
-
-            question = input(
-                "You: "
-            ).strip()
-
-        except (
-            KeyboardInterrupt,
-            EOFError
-        ):
-
-            print(
-                "\nGoodbye!"
-            )
-
+            question = input("You: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nGoodbye!")
             break
-
-
-        # ----------------------------------------------------
-        # EMPTY INPUT
-        # ----------------------------------------------------
 
         if not question:
-
-            print(
-                "Please enter a question."
-            )
-
+            print("Please enter a question.")
             continue
 
-
-        # ----------------------------------------------------
-        # EXIT
-        # ----------------------------------------------------
-
-        if question.lower() in [
-
-            "exit",
-            "quit"
-
-        ]:
-
-            print()
-            print(
-                "Goodbye! 👋"
-            )
-
+        if question.lower() in ["exit", "quit"]:
+            print("\nGoodbye! 👋")
             break
 
-
-        # ----------------------------------------------------
-        # CLEAR MEMORY
-        # ----------------------------------------------------
-
         if question.lower() == "clear":
-
             reset_conversation()
-
-            print()
-            print(
-                "Conversation memory cleared."
-            )
-
-            print()
-
+            print("\nConversation memory cleared.\n")
             continue
 
-
-        # ----------------------------------------------------
-        # RUN AGENT
-        # ----------------------------------------------------
-
         try:
-
             answer = run_agent(
-
                 question,
-
                 df,
-
                 dataset_name
-
-            )
-
-
-            print()
-            print(
-                "FINAL ANSWER:"
-            )
-
-            print(
-                answer
             )
 
             print()
-
+            print("FINAL ANSWER:")
+            print(answer)
+            print()
 
         except Exception as e:
-
-            print()
-            print(
-                "Agent Error:"
-            )
-
-            print(
-                str(e)
-            )
-
+            print("\nAgent Error:")
+            print(str(e))
             print()
