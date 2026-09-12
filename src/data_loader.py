@@ -6,7 +6,8 @@ import pandas as pd
 # DATA DIRECTORY
 # ============================================================
 
-DATA_DIRECTORY = "data"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIRECTORY = os.path.join(BASE_DIR, "data")
 
 
 # ============================================================
@@ -41,18 +42,24 @@ def load_csv(filename):
     Load a selected CSV file into a Pandas DataFrame.
     """
 
+    clean_filename = os.path.basename(filename)
+
     file_path = os.path.join(
         DATA_DIRECTORY,
-        filename
+        clean_filename
     )
 
     if not os.path.exists(file_path):
 
-        raise FileNotFoundError(
-            f"Dataset not found: {file_path}"
-        )
+        # Fallback check if full path passed directly
+        if os.path.exists(filename):
+            file_path = filename
+        else:
+            raise FileNotFoundError(
+                f"Dataset not found: {file_path}"
+            )
 
-    if not filename.lower().endswith(".csv"):
+    if not file_path.lower().endswith(".csv"):
 
         raise ValueError(
             "Only CSV files are supported."

@@ -1,6 +1,7 @@
 import os
 import json
 import pandas as pd
+from data_inspector import get_smart_profile
 
 
 # ============================================================
@@ -9,32 +10,11 @@ import pandas as pd
 
 def inspect_dataset(df):
     """
-    Inspect the dataset and return useful information
+    Inspect the dataset and return rich smart profile information
     for the AI agent.
     """
 
-    result = {
-        "rows": int(df.shape[0]),
-        "columns": int(df.shape[1]),
-        "column_names": df.columns.tolist(),
-        "data_types": {
-            column: str(dtype)
-            for column, dtype in df.dtypes.items()
-        },
-        "missing_values": {
-            column: int(value)
-            for column, value in df.isnull().sum().items()
-        },
-        "numeric_columns": df.select_dtypes(
-            include="number"
-        ).columns.tolist(),
-
-        "categorical_columns": df.select_dtypes(
-            exclude="number"
-        ).columns.tolist()
-    }
-
-    return result
+    return get_smart_profile(df)
 
 
 # ============================================================
