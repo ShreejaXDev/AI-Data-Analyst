@@ -19,17 +19,20 @@ from tools import (
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = os.getenv(
+    "GEMINI_API_KEY"
+)
 
 if not GEMINI_API_KEY:
 
     raise ValueError(
-        "GEMINI_API_KEY environment variable is not set."
+        "GEMINI_API_KEY environment variable "
+        "is not set."
     )
 
 
 # ============================================================
-# GEMINI CLIENT
+# GEMINI
 # ============================================================
 
 MODEL_NAME = "gemini-3.5-flash-lite"
@@ -45,42 +48,57 @@ client = genai.Client(
 
 execute_analysis_tool = {
     "name": "execute_analysis",
+
     "description": """
-Execute Python Pandas code on the dataset.
+Execute Python Pandas analysis on the dataset.
 
-The code must use the dataframe variable `df`.
+The dataframe is available as:
 
-The code must store the final answer in a variable
-called `result`.
+df
 
-Available libraries:
-- pandas as pd
-- dataframe as df
+Pandas is available as:
+
+pd
+
+The final answer must be stored in:
+
+result
 
 Use this tool for:
+
+- calculations
 - filtering
 - sorting
 - groupby
 - aggregation
 - statistics
-- missing values
-- correlations
+- correlation
+- missing-value analysis
+- duplicate analysis
+- top/bottom N
 - comparisons
-- top/bottom records
-- calculations
 """,
+
     "parameters": {
         "type": "object",
+
         "properties": {
+
             "code": {
                 "type": "string",
-                "description": (
-                    "Python Pandas code. "
-                    "The final result must be stored "
-                    "in the variable `result`."
-                )
+
+                "description": """
+Python/Pandas code.
+
+The final calculated result
+must be assigned to:
+
+result
+"""
             }
+
         },
+
         "required": ["code"]
     }
 }
@@ -88,24 +106,27 @@ Use this tool for:
 
 generate_visualization_tool = {
     "name": "generate_visualization",
-    "description": """
-Generate a visualization using Matplotlib.
 
-The code has access to:
-- df
-- pd
-- plt
+    "description": """
+Generate a data visualization using Matplotlib.
+
+Available variables:
+
+df
+pd
+plt
 
 Rules:
+
 - Use Matplotlib only.
 - Do not use seaborn.
 - Do not use plotly.
 - Do not call plt.savefig().
 - Do not call plt.close().
-- Create a figure using plt.
-- The tool itself saves the figure.
+- Create the figure.
+- The tool saves the figure.
 
-Choose the visualization based on the question:
+Choose appropriate charts:
 
 Categorical comparison:
 bar chart
@@ -116,144 +137,258 @@ histogram
 Numerical relationship:
 scatter plot
 
-Trend over time:
+Trend:
 line chart
 
 Proportion:
-pie chart or bar chart
+pie or bar chart
 """,
+
     "parameters": {
         "type": "object",
+
         "properties": {
+
             "code": {
                 "type": "string",
+
                 "description": (
-                    "Matplotlib Python code that creates "
+                    "Matplotlib code that creates "
                     "the requested visualization."
                 )
             }
+
         },
+
         "required": ["code"]
     }
 }
 
 
 # ============================================================
-# SYSTEM INSTRUCTIONS
+# SYSTEM PROMPT
 # ============================================================
 
 SYSTEM_PROMPT = """
-You are an AI Data Analyst.
 
-Your job is to analyze a pandas dataframe and answer
-the user's natural-language data questions.
+You are an AI Data Analyst agent.
 
-You are an AGENT, not simply a chatbot.
+Your job is to analyze arbitrary tabular datasets
+using Python and Pandas.
 
-You must:
+You are an AGENT, not a simple chatbot.
+
+--------------------------------------------------
+CORE WORKFLOW
+--------------------------------------------------
 
 1. Understand the user's question.
 
-2. Inspect the dataset when necessary.
+2. Inspect the dataset information.
 
-3. Break complex questions into smaller analytical tasks.
+3. Identify relevant columns.
 
-4. Generate Python/Pandas code dynamically.
+4. Check data quality when relevant.
 
-5. Execute the code using the analysis tool.
+5. Create a plan for complex questions.
 
-6. Inspect the result returned by the tool.
+6. Generate Python/Pandas code.
 
-7. If the result is insufficient, perform another analysis.
+7. Execute the code using execute_analysis.
 
-8. If the user asks for a visualization,
-   use the visualization tool.
+8. OBSERVE the tool result.
 
-9. Only claim a visualization was created if
-   the visualization tool returned success=True.
+9. If the tool returns an error:
+   - understand the error
+   - identify the likely cause
+   - generate corrected code
+   - execute again
 
-10. Give a clear final answer using the actual
-    computed results.
+10. Continue until the analysis succeeds
+    or no useful progress is possible.
 
-IMPORTANT DATA ANALYSIS RULES:
+11. If visualization is requested:
+    use generate_visualization.
 
-- Never invent numbers.
-- Never guess analytical results.
-- Use the tools to calculate results.
-- Prefer pandas operations.
-- Handle missing values carefully.
-- Check whether columns contain null values
-  before calculations when relevant.
-- Use appropriate aggregation functions.
-- Use groupby when comparing categories.
-- Use sorting when the user asks for top/bottom results.
-- Use correlation when relationships between numerical
-  variables are requested.
+12. Only claim a visualization exists if
+    the tool returned success=True.
 
-COMMON ANALYSIS PATTERNS:
+--------------------------------------------------
+DATA QUALITY
+--------------------------------------------------
+
+Pay attention to:
+
+- missing values
+- duplicate rows
+- incorrect column names
+- data types
+- empty results
+- invalid operations
+
+Do not blindly remove or modify data.
+
+If missing values are relevant:
+
+- inspect them
+- understand their impact
+- choose a sensible analytical approach
+
+Remember that Pandas functions such as mean()
+often ignore NaN values automatically.
+
+--------------------------------------------------
+ERROR RECOVERY
+--------------------------------------------------
+
+IMPORTANT:
+
+Errors are NOT final failures.
+
+If execute_analysis returns:
+
+success=False
+
+inspect:
+
+error
+error_type
+
+Then fix the generated code and try again.
+
+Example:
+
+Generated code:
+
+result = df["salary"].mean()
+
+Error:
+
+KeyError: 'salary'
+
+Look at the dataset columns.
+
+If the actual column is:
+
+Salary
+
+generate:
+
+result = df["Salary"].mean()
+
+Then execute again.
+
+Do NOT repeatedly generate the same failed code.
+
+--------------------------------------------------
+ANALYSIS PATTERNS
+--------------------------------------------------
 
 Filtering:
+
 df[df["Age"] > 50]
 
 Sorting:
-df.sort_values("Fare", ascending=False)
+
+df.sort_values(
+    "Fare",
+    ascending=False
+)
 
 Top N:
-df.nlargest(10, "Fare")
+
+df.nlargest(
+    10,
+    "Fare"
+)
 
 Grouping:
-df.groupby("Pclass")["Fare"].mean()
+
+df.groupby(
+    "Pclass"
+)["Fare"].mean()
 
 Multiple statistics:
-df.groupby("Pclass")["Fare"].agg(
+
+df.groupby(
+    "Pclass"
+)["Fare"].agg(
     ["mean", "median", "min", "max"]
 )
 
 Missing values:
+
 df.isnull().sum()
 
+Duplicates:
+
+df.duplicated().sum()
+
 Correlation:
-df["Age"].corr(df["Fare"])
 
-IMPORTANT:
+df["Age"].corr(
+    df["Fare"]
+)
 
-When using execute_analysis, the final result
-must be stored in:
+--------------------------------------------------
+IMPORTANT RULES
+--------------------------------------------------
 
-result
+Never invent numbers.
 
-For visualization:
+Never guess results.
 
-- use Matplotlib
-- create a figure
-- do not use seaborn
-- do not use plotly
-- do not use savefig
-- do not use close
+Always use tools for calculations.
+
+Use actual dataset column names.
+
+Validate results before answering.
+
+Keep final answers concise and understandable.
+
+--------------------------------------------------
+VISUALIZATION
+--------------------------------------------------
+
+Only create a visualization when:
+
+- user explicitly asks for one
+OR
+- visualization is clearly necessary to answer the question.
+
+Do not automatically create charts for every question.
+
+Use:
+
+Matplotlib only.
+
+Do not use:
+
+seaborn
+plotly
+
+Do not call:
+
+plt.savefig()
+plt.close()
 
 The visualization tool handles saving.
-
-When the user requests both analysis and visualization,
-perform BOTH tasks.
-
-Do not say a chart was created unless the tool
-actually succeeded.
-
-Return concise but useful explanations.
 """
 
 
 # ============================================================
-# DATASET LOADING
+# LOAD DATA
 # ============================================================
 
 DATA_PATH = "data/train.csv"
 
-df = pd.read_csv(DATA_PATH)
+df = pd.read_csv(
+    DATA_PATH
+)
 
 
 # ============================================================
-# AGENT FUNCTION
+# AGENT
 # ============================================================
 
 def run_agent(user_question):
@@ -265,7 +400,7 @@ def run_agent(user_question):
     print(user_question)
 
     # --------------------------------------------------------
-    # Dataset inspection
+    # Inspect dataset
     # --------------------------------------------------------
 
     dataset_info = inspect_dataset(df)
@@ -284,16 +419,16 @@ User question:
 
 {user_question}
 
-Analyze the question and use the appropriate tools.
-"""
+Analyze the question carefully.
 
-    # --------------------------------------------------------
-    # Conversation state
-    # --------------------------------------------------------
+Use the available tools to calculate
+the actual answer.
+"""
 
     contents = [
         {
             "role": "user",
+
             "parts": [
                 {
                     "text": prompt
@@ -302,8 +437,14 @@ Analyze the question and use the appropriate tools.
         }
     ]
 
+    # --------------------------------------------------------
+    # State
+    # --------------------------------------------------------
+
     analysis_completed = False
+
     visualization_completed = False
+
     visualization_path = None
 
     max_iterations = 8
@@ -312,7 +453,9 @@ Analyze the question and use the appropriate tools.
     # Agent loop
     # --------------------------------------------------------
 
-    for iteration in range(max_iterations):
+    for iteration in range(
+        max_iterations
+    ):
 
         print(
             f"\n===== AGENT ITERATION "
@@ -321,9 +464,13 @@ Analyze the question and use the appropriate tools.
 
         response = client.models.generate_content(
             model=MODEL_NAME,
+
             contents=contents,
+
             config={
-                "system_instruction": SYSTEM_PROMPT,
+                "system_instruction":
+                    SYSTEM_PROMPT,
+
                 "tools": [
                     {
                         "function_declarations": [
@@ -335,15 +482,17 @@ Analyze the question and use the appropriate tools.
             }
         )
 
-        # ----------------------------------------------------
-        # Check function calls
-        # ----------------------------------------------------
-
         function_calls = []
 
         if response.function_calls:
 
-            function_calls = response.function_calls
+            function_calls = (
+                response.function_calls
+            )
+
+        # ----------------------------------------------------
+        # No tool call
+        # ----------------------------------------------------
 
         if not function_calls:
 
@@ -360,18 +509,24 @@ Analyze the question and use the appropriate tools.
                 ]
             )
 
-            if wants_visualization and not visualization_completed:
+            if (
+                wants_visualization
+                and not visualization_completed
+            ):
 
                 contents.append(
                     {
                         "role": "user",
+
                         "parts": [
                             {
                                 "text": (
-                                    "The user explicitly requested "
-                                    "a visualization. You have not "
-                                    "successfully generated one yet. "
-                                    "Please call generate_visualization."
+                                    "The user explicitly "
+                                    "requested a visualization. "
+                                    "You have not successfully "
+                                    "generated one yet. "
+                                    "Please call "
+                                    "generate_visualization."
                                 )
                             }
                         ]
@@ -383,7 +538,7 @@ Analyze the question and use the appropriate tools.
             return final_text
 
         # ----------------------------------------------------
-        # Process function calls
+        # Tool results
         # ----------------------------------------------------
 
         tool_results = []
@@ -394,87 +549,120 @@ Analyze the question and use the appropriate tools.
 
             tool_args = function_call.args
 
-            print("\n===== TOOL CALL =====")
-            print(f"Tool: {tool_name}")
-            print("Arguments:")
+            print(
+                "\n===== TOOL CALL ====="
+            )
+
+            print(
+                f"Tool: {tool_name}"
+            )
+
+            print(
+                "Arguments:"
+            )
+
             print(tool_args)
 
-            # ------------------------------------------------
-            # ANALYSIS TOOL
-            # ------------------------------------------------
+            # ================================================
+            # ANALYSIS
+            # ================================================
 
             if tool_name == "execute_analysis":
 
-                code = tool_args.get("code")
+                code = tool_args.get(
+                    "code"
+                )
 
                 result = execute_analysis(
                     code,
                     df
                 )
 
-                analysis_completed = result.get(
-                    "success",
-                    False
+                analysis_completed = (
+                    result.get(
+                        "success",
+                        False
+                    )
                 )
 
-                print("\n===== TOOL RESULT =====")
+                print(
+                    "\n===== TOOL RESULT ====="
+                )
+
                 print(result)
 
                 tool_results.append(
                     {
                         "name": tool_name,
+
                         "result": result
                     }
                 )
 
-            # ------------------------------------------------
-            # VISUALIZATION TOOL
-            # ------------------------------------------------
+            # ================================================
+            # VISUALIZATION
+            # ================================================
 
-            elif tool_name == "generate_visualization":
+            elif (
+                tool_name ==
+                "generate_visualization"
+            ):
 
-                code = tool_args.get("code")
+                code = tool_args.get(
+                    "code"
+                )
 
                 result = generate_visualization(
                     code,
                     df
                 )
 
-                visualization_completed = result.get(
-                    "success",
-                    False
+                visualization_completed = (
+                    result.get(
+                        "success",
+                        False
+                    )
                 )
 
                 if visualization_completed:
 
-                    visualization_path = result.get(
-                        "path"
+                    visualization_path = (
+                        result.get(
+                            "path"
+                        )
                     )
 
-                print("\n===== TOOL RESULT =====")
+                print(
+                    "\n===== TOOL RESULT ====="
+                )
+
                 print(result)
 
                 tool_results.append(
                     {
                         "name": tool_name,
+
                         "result": result
                     }
                 )
 
         # ----------------------------------------------------
-        # Send tool results back to Gemini
+        # Send results back to Gemini
         # ----------------------------------------------------
 
         contents.append(
             {
                 "role": "model",
+
                 "parts": [
+
                     {
                         "function_call": {
                             "name": call.name,
                             "args": call.args
                         }
                     }
+
                     for call in function_calls
                 ]
             }
@@ -483,7 +671,9 @@ Analyze the question and use the appropriate tools.
         contents.append(
             {
                 "role": "user",
+
                 "parts": [
+
                     {
                         "text": (
                             "Tool results:\n"
@@ -492,22 +682,38 @@ Analyze the question and use the appropriate tools.
                                 default=str,
                                 indent=2
                             )
-                            + "\n\n"
-                            "Use these results to continue "
-                            "the analysis. If more analysis "
-                            "is required, call the appropriate "
-                            "tool. If visualization was requested "
-                            "and has not succeeded, call the "
-                            "visualization tool."
+                            + """
+
+Continue the task.
+
+IMPORTANT:
+
+If a tool failed:
+
+1. Read the error.
+2. Determine why it failed.
+3. Correct the code.
+4. Call the tool again.
+
+Do not repeat the same failed code.
+
+If the analysis is successful,
+use the result to answer the user.
+
+If visualization was explicitly requested
+and has not succeeded, generate it.
+"""
                         )
                     }
+
                 ]
             }
         )
 
     return (
-        "The agent reached its maximum number of "
-        "iterations before completing the task."
+        "The agent reached its maximum "
+        "number of iterations before "
+        "completing the task."
     )
 
 
@@ -521,11 +727,21 @@ if __name__ == "__main__":
         "\nAsk your AI Data Analyst: "
     )
 
-    answer = run_agent(question)
+    answer = run_agent(
+        question
+    )
 
-    print("\n" + "=" * 60)
-    print("FINAL ANSWER")
-    print("=" * 60)
+    print(
+        "\n" + "=" * 60
+    )
+
+    print(
+        "FINAL ANSWER"
+    )
+
+    print(
+        "=" * 60
+    )
 
     print(answer)
 
@@ -535,4 +751,6 @@ if __name__ == "__main__":
             "\nVisualization saved at:"
         )
 
-        print(visualization_path)
+        print(
+            visualization_path
+        )
