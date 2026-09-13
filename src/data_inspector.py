@@ -591,6 +591,68 @@ def make_json_safe(value):
 
 
 # ============================================================
+# CLEANING RECOMMENDATIONS
+# ============================================================
+
+def get_cleaning_recommendations(df):
+    """
+    Generate deterministic data cleaning recommendations for the dataset.
+    """
+    recommendations = []
+
+    # 1. Check duplicate rows
+    dup_count = get_duplicate_count(df)
+    if dup_count > 0:
+        recommendations.append({
+            "type": "remove_duplicates",
+            "issue": f"Dataset contains {dup_count} duplicate row(s).",
+            "suggestion": "Remove duplicate rows if unique records are required."
+        })
+
+    # 2. Check missing values
+    for col in df.columns:
+        missing = int(df[col].isnull().sum())
+        if missing > 0:
+            pct = round(missing / len(df) * 100, 2)
+            if pd.api.types.is_numeric_dtype(df[col]):
+                suggestion = f"Impute missing values using median ({df[col].median()}) or mean ({round(df[col].mean(), 2)})."
+            else:
+                suggestion = "Impute missing values using mode or fill with 'Unknown'."
+            
+            recommendations.append({
+                "type": "impute_missing",
+                "column": col,
+                "missing_count": missing,
+                "missing_percentage": pct,
+                "issue": f"Column '{col}' has {missing} missing value(s) ({pct}%).",
+                "suggestion": suggestion
+            })
+
+    # 3. Check possible date columns stored as string
+    possible_dates = detect_possible_date_columns(df)
+    for col in possible_dates:
+        if not pd.api.types.is_datetime64_any_dtype(df[col]):
+            recommendations.append({
+                "type": "parse_dates",
+                "column": col,
+                "issue": f"Column '{col}' contains date-like values but has data type '{df[col].dtype}'.",
+                "suggestion": f"Convert '{col}' to datetime using pd.to_datetime()."
+            })
+
+    # 4. Check potential constant or single-value columns
+    for col in df.columns:
+        if df[col].nunique(dropna=True) <= 1 and len(df) > 1:
+            recommendations.append({
+                "type": "constant_column",
+                "column": col,
+                "issue": f"Column '{col}' has only {df[col].nunique(dropna=True)} unique value.",
+                "suggestion": f"Consider dropping column '{col}' as it offers no variance."
+            })
+
+    return recommendations
+
+
+# ============================================================
 # SMART DATASET PROFILE
 # ============================================================
 
@@ -652,6 +714,8 @@ def get_smart_profile(df):
         possible_dates
     )
 
+    cleaning_recs = get_cleaning_recommendations(df)
+
     return {
         "rows": overview["rows"],
         "columns": overview["columns"],
@@ -694,8 +758,11 @@ def get_smart_profile(df):
 
         "numeric_correlations": correlations,
 
-        "analysis_hints": analysis_hints
+        "analysis_hints": analysis_hints,
+
+        "cleaning_recommendations": cleaning_recs
     }
+
 
 
 # ============================================================

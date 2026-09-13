@@ -372,7 +372,7 @@ def validate_decision(decision_dict):
 
     decision_value = str(decision_dict["decision"]).upper()
 
-    allowed_decisions = ["ANALYZE", "VISUALIZE", "REPLAN", "FINISH"]
+    allowed_decisions = ["ANALYZE", "TRANSFORM", "VISUALIZE", "EXPORT_DATA", "REPLAN", "FINISH"]
 
     if decision_value not in allowed_decisions:
         return False
