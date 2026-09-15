@@ -681,7 +681,8 @@ def run_agent(
     user_question,
     df,
     dataset_name,
-    return_active_df=False
+    return_active_df=False,
+    return_details=False
 ):
     global active_working_df, active_dataset_name
 
@@ -788,6 +789,8 @@ def run_agent(
                 "assistant": final_text
             })
 
+            if return_details:
+                return final_text, active_df, completed_actions
             if return_active_df:
                 return final_text, active_df
             return final_text
@@ -1186,6 +1189,8 @@ Generate corrected Matplotlib code.
         "assistant": final_text
     })
 
+    if return_details:
+        return final_text, active_df, completed_actions
     if return_active_df:
         return final_text, active_df
     return final_text

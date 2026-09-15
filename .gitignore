@@ -1,3 +1,14 @@
-.venv/
-__pycache__/
+# Environment & Virtual Env
 .env
+.venv/
+
+# Python Cache & Bytecode
+__pycache__/
+*.pyc
+.pytest_cache/
+*.log
+
+# Node & Frontend Build Artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
